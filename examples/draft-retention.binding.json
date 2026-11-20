@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "0.1.0",
+  "baseUrl": "http://localhost:3000",
+  "events": [
+    {
+      "event": "edit",
+      "actions": [
+        {
+          "kind": "fill",
+          "locator": { "kind": "testId", "value": "draft-input" },
+          "inputId": "draft-text"
+        }
+      ]
+    },
+    {
+      "event": "save",
+      "actions": [
+        {
+          "kind": "click",
+          "locator": { "kind": "testId", "value": "save-button" }
+        }
+      ]
+    },
+    {
+      "event": "discard",
+      "actions": [
+        {
+          "kind": "click",
+          "locator": { "kind": "testId", "value": "discard-button" }
+        }
+      ]
+    },
+    {
+      "event": "reload",
+      "actions": [
+        { "kind": "reload" }
+      ]
+    }
+  ],
+  "observe": [
+    {
+      "variable": "draft",
+      "source": {
+        "locator": { "kind": "testId", "value": "draft-status" },
+        "kind": "text"
+      },
+      "cases": [
+        { "observed": "empty", "abstract": "empty" },
+        { "observed": "dirty", "abstract": "dirty" },
+        { "observed": "saved", "abstract": "saved" }
+      ]
+    }
+  ],
+  "oracles": [
+    {
+      "property": "no_implicit_discard",
+      "inputId": "draft-text",
+      "afterEvent": "reload",
+      "actual": {
+        "locator": { "kind": "testId", "value": "draft-input" },
+        "kind": "value"
+      }
+    }
+  ],
+  "setup": [],
+  "reset": [],
+  "network": [],
+  "selfTest": [
+    {
+      "locator": { "kind": "testId", "value": "draft-status" },
+      "kind": "text"
+    },
+    {
+      "locator": { "kind": "testId", "value": "draft-input" },
+      "kind": "value"
+    }
+  ]
+}

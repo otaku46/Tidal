@@ -1,0 +1,42 @@
+[meta]
+ir = "surv-behavior"
+name = "tidal_draft_retention"
+version = "0.1.0"
+
+# AC-01 の設計例。ブラウザーでの具体的な入力値保持は独立オラクルで検証する。
+[behavior.draft_retention]
+owner = "mod.model"
+description = "下書き編集・保存・破棄とリロード。最後のアクションで neverTransition の unless を表す。"
+
+[behavior.draft_retention.vars]
+draft = "enum(empty, dirty, saved)"
+previous_draft = "enum(empty, dirty, saved)"
+last_event = "enum(initial, edit, save, discard, reload)"
+
+[behavior.draft_retention.init]
+draft = "empty"
+previous_draft = "empty"
+last_event = "initial"
+
+[behavior.draft_retention.action.edit]
+update = { previous_draft = "draft", draft = "'dirty'", last_event = "'edit'" }
+
+[behavior.draft_retention.action.save]
+guard = "draft == 'dirty'"
+update = { previous_draft = "draft", draft = "'saved'", last_event = "'save'" }
+
+[behavior.draft_retention.action.discard]
+guard = "draft != 'empty'"
+update = { previous_draft = "draft", draft = "'empty'", last_event = "'discard'" }
+
+[behavior.draft_retention.action.reload]
+update = { previous_draft = "draft", last_event = "'reload'" }
+
+[behavior.draft_retention.invariant.discard_is_required_to_empty_draft]
+expr = "previous_draft == 'empty' or draft != 'empty' or last_event == 'discard'"
+
+[behavior.draft_retention.invariant.reload_preserves_abstract_draft]
+expr = "last_event != 'reload' or draft == previous_draft"
+
+[behavior.draft_retention.check]
+check_deadlock = true

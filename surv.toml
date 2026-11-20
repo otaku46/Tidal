@@ -1,0 +1,7 @@
+[project]
+name = "Tidal"
+description = "Web UX の宣言的仕様をモデル検査・適合性検査・具体値検証で評価する。要件は docs/spec_tidal.md を参照。"
+
+[paths]
+ir_root = "design"
+behavior_root = "behavior"

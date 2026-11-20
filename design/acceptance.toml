@@ -1,0 +1,22 @@
+require = ["mod.golden", "mod.adapter", "mod.runtime", "mod.cli"]
+
+[meta]
+name = "tidal_acceptance"
+version = "0.1.0"
+description = "Phase 4。AC-08 とランタイム受け入れ基準。"
+
+[schema.FrameworkFixture]
+kind = "node"
+fields = { framework = "react|solid|svelte", binding = "schema.JsonValue" }
+
+[func.verifyFrameworkFixtures]
+intent = "同一の draft-retention spec.json を React・Solid・Svelte のフィクスチャに適用する。"
+input = ["schema.UxSpec", "schema.FrameworkFixture", "schema.GoldenExpectation"]
+output = ["schema.Diagnostic"]
+design_notes = "独立したサンプルアプリを共通 Playwright アダプターで操作・観測し、各アプリのロケーターは binding.json で指定する。"
+impl.lang = "ts"
+
+[mod.acceptance]
+purpose = "フレームワーク横断検証。共通モデル、共通アダプター、独立した具体値オラクルの受け入れ条件を確認する。"
+schemas = ["schema.FrameworkFixture"]
+funcs = ["func.verifyFrameworkFixtures"]

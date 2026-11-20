@@ -1,0 +1,61 @@
+require = ["mod.adapter", "mod.model", "mod.reporting"]
+
+[meta]
+name = "tidal_runtime"
+version = "0.1.0"
+description = "Phase 3。FR-16〜18、AC-02〜05・07。"
+
+[schema.Trace]
+kind = "node"
+label = "モデル探索から作るイベント列。分岐の識別に必要な候補遷移を参照する。"
+fields = { initial = "schema.AbstractState", eventIds = "string[]", obligations = "string[]" }
+
+[schema.Trial]
+kind = "node"
+label = "同一の実行条件と、抽象観測・オラクルが参照する具体入力。"
+fields = { trace = "schema.Trace", config = "schema.RuntimeConfig", inputs = "schema.ConcreteInput[]" }
+
+[schema.RuntimeTrace]
+kind = "node"
+fields = { trial = "schema.Trial", expectedSteps = "schema.ModelStep[]", observations = "schema.Observation[]", oracleResults = "schema.ReplayResult[]", diagnostics = "schema.Diagnostic[]" }
+
+[func.generateTraces]
+intent = "探索済みの遷移を通る決定的なトレースとカバレッジ義務を作る。"
+input = ["schema.ModelGraph", "schema.Binding"]
+output = ["schema.Trace", "schema.Coverage"]
+design_notes = "各到達規則の始点への最短接頭辞と当該イベントを候補にし、オラクルの入力から検証点まで到達する列も候補にする。実行不能・未観測の分岐は COVERAGE_SHORT の根拠として残す。イベント実行回数と実際に確認した分岐のカバレッジを区別する。"
+impl.lang = "ts"
+
+[func.evaluateOracle]
+intent = "入力に使用した一意の具体値と、検証点で直接読み取った具体値を比較する。"
+input = ["schema.OracleRule", "schema.Trial"]
+output = ["schema.ReplayResult"]
+design_notes = "期待値は最初の試行の入力生成から保存し、再試行でも保持する。抽象値写像を経由せず、共有するロケーターや読み取りの健全性を証拠の有効条件に含める。読み取り障害は不一致とは区別する。"
+impl.lang = "ts"
+
+[func.runTrace]
+intent = "初期化から各イベントと観測・オラクル検証を実行し、モデルの許容結果と照合する。"
+input = ["schema.Trial", "schema.Binding", "schema.ModelGraph", "schema.RunContext"]
+output = ["schema.RuntimeTrace"]
+design_notes = "初期状態と操作後の観測を照合する。非決定の env は許容する全候補から観測に一致する分岐を扱う。観測だけの不一致は MODEL_DIVERGENCE、来歴不明の変化は UNEXPLAINED_CHANGE として保存する。アダプター障害で進めない検査と未到達の義務を記録し、独立した model 結果を保持する。"
+impl.lang = "ts"
+
+[func.replayViolation]
+intent = "独立した具体値オラクルの違反を同じトレース、具体入力、モック条件で再実行する。"
+input = ["schema.RuntimeTrace", "schema.Binding", "schema.ModelGraph", "schema.RunContext"]
+output = ["schema.RuntimeTrace"]
+design_notes = "元の観測と全再試行を保持する。有効な一致・不一致が混在した場合は FLAKY。再試行回数と CONFIRMED に必要な閾値は Q1 として Golden Test と合わせて確定する。"
+impl.lang = "ts"
+
+[func.runRuntimeChecks]
+intent = "要求されたランタイム対象を実行し、対象別判定・証拠と未評価情報をレポート境界へ渡す。"
+input = ["schema.UxSpec", "schema.ModelGraph", "schema.Binding", "schema.RuntimeConfig", "schema.RunContext"]
+output = ["schema.RunResults"]
+design_notes = "トレース生成、アダプター自己テスト、試行ごとの隔離、同条件再実行を調整する。未実行の義務を PASS とせず、依存する検査を ADAPTER_ERROR または COVERAGE_SHORT で記録する。model を要求しない場合もトレース生成に必要な探索を行い、model の判定は NOT_REQUESTED として扱う。"
+impl.lang = "ts"
+
+[mod.runtime]
+purpose = "モデル起点のトレース生成、適合性・独立オラクル検査、再実行。FR-16〜18。"
+schemas = ["schema.Trace", "schema.Trial", "schema.RuntimeTrace"]
+funcs = ["func.generateTraces", "func.evaluateOracle", "func.runTrace", "func.replayViolation", "func.runRuntimeChecks"]
+pipeline = ["func.runTrace -> func.replayViolation"]

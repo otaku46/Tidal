@@ -1,0 +1,89 @@
+{
+  "schemaVersion": "0.1.0",
+  "kind": "tidal.uxSpec",
+  "states": [
+    { "id": "draft", "domain": ["empty", "dirty", "saved"] }
+  ],
+  "initialState": {
+    "values": [{ "variable": "draft", "value": "empty" }]
+  },
+  "events": [
+    { "id": "edit", "kind": "user" },
+    { "id": "save", "kind": "user" },
+    { "id": "discard", "kind": "user" },
+    { "id": "reload", "kind": "browser" }
+  ],
+  "transitions": [
+    {
+      "id": "t_edit",
+      "event": "edit",
+      "when": { "op": "literal", "value": true },
+      "set": { "draft": { "op": "literal", "value": "dirty" } }
+    },
+    {
+      "id": "t_save",
+      "event": "save",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "draft" },
+        { "op": "literal", "value": "dirty" }
+      ]},
+      "set": { "draft": { "op": "literal", "value": "saved" } }
+    },
+    {
+      "id": "t_discard",
+      "event": "discard",
+      "when": { "op": "ne", "args": [
+        { "op": "ref", "variable": "draft" },
+        { "op": "literal", "value": "empty" }
+      ]},
+      "set": { "draft": { "op": "literal", "value": "empty" } }
+    },
+    {
+      "id": "t_reload",
+      "event": "reload",
+      "when": { "op": "literal", "value": true },
+      "set": {}
+    }
+  ],
+  "properties": [
+    {
+      "id": "no_implicit_discard",
+      "kind": "neverTransition",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "draft" },
+        { "op": "literal", "value": "dirty" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "draft" },
+        { "op": "literal", "value": "empty" }
+      ]},
+      "unless": "discard"
+    },
+    {
+      "id": "empty_can_be_saved",
+      "kind": "canReach",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "draft" },
+        { "op": "literal", "value": "empty" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "draft" },
+        { "op": "literal", "value": "saved" }
+      ]}
+    },
+    {
+      "id": "dirty_is_escapable_by_user",
+      "kind": "escapable",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "draft" },
+        { "op": "literal", "value": "dirty" }
+      ]},
+      "by": "user"
+    }
+  ],
+  "analysis": {
+    "maxStates": 100,
+    "maxDepth": 10,
+    "maxTransitions": 10000
+  }
+}

@@ -1,0 +1,99 @@
+require = ["mod.specification"]
+
+[meta]
+name = "tidal_adapter"
+version = "0.1.0"
+description = "Phase 3。FR-11〜15。"
+
+[schema.Locator]
+kind = "node"
+fields = { kind = "role|ariaLabel|testId", value = "string", name = "string?" }
+
+[schema.Read]
+kind = "node"
+fields = { locator = "schema.Locator", kind = "attribute|text|value", attribute = "string?" }
+
+[schema.Action]
+kind = "node"
+fields = { kind = "navigate|click|fill|reload|back|wait", locator = "schema.Locator?", path = "string?", value = "string?", inputId = "string?", condition = "schema.Read?", expected = "schema.Scalar?" }
+
+[schema.ObservationRule]
+kind = "node"
+fields = { variable = "string", source = "schema.Read", cases = "schema.ObservationCase[]" }
+
+[schema.ObservationCase]
+kind = "node"
+fields = { observed = "schema.Scalar", abstract = "schema.Scalar" }
+
+[schema.BoundEvent]
+kind = "node"
+fields = { event = "string", actions = "schema.Action[]", appMarker = "schema.Read?", networkFixture = "string?" }
+
+[schema.ConcreteInput]
+kind = "node"
+fields = { id = "string", value = "string" }
+
+[schema.OracleRule]
+kind = "node"
+fields = { property = "string", inputId = "string", afterEvent = "string", actual = "schema.Read" }
+
+[schema.NetworkFixture]
+kind = "node"
+fields = { id = "string", path = "string", status = "int", body = "string?" }
+
+[schema.Binding]
+kind = "node"
+label = "外部 binding.json。イベント対応、初期化・リセット、観測、オラクル、検証環境の制御を宣言する。"
+fields = { schemaVersion = "string", baseUrl = "string", events = "schema.BoundEvent[]", observe = "schema.ObservationRule[]", oracles = "schema.OracleRule[]", setup = "schema.Action[]", reset = "schema.Action[]", network = "schema.NetworkFixture[]", selfTest = "schema.Read[]" }
+
+[schema.RuntimeConfig]
+kind = "node"
+fields = { allowedOrigins = "string[]", timeoutMs = "int", replayAttempts = "int", seed = "string" }
+
+[func.resolveBinding]
+intent = "binding.json の構造、イベント ID、観測先、値域、許可された操作先を検証する。"
+input = ["schema.JsonValue", "schema.UxSpec", "schema.RuntimeConfig"]
+output = ["schema.Binding", "schema.Diagnostic"]
+design_notes = "ローカルまたは明示許可されたテスト環境の origin に操作を制限する。ナビゲーションやリダイレクトを含めて許可範囲を確認し、任意コードを Binding に含めない。"
+impl.lang = "ts"
+
+[func.setupAdapter]
+intent = "Playwright を起動し、初回の隔離コンテキスト、明示的待機、決定的なネットワーク応答を準備する。"
+input = ["schema.Binding", "schema.RuntimeConfig"]
+output = ["schema.Diagnostic"]
+impl.lang = "ts"
+
+[func.resetAdapter]
+intent = "試行ごとにブラウザーコンテキストを作り直し、ストレージや Cookie を隔離して初期化手順を適用する。"
+input = ["schema.Binding"]
+output = ["schema.Diagnostic"]
+impl.lang = "ts"
+
+[func.executeEvent]
+intent = "BoundEvent の操作を実行し、条件待機またはアプリ側の同期ポイントを使う。"
+input = ["schema.BoundEvent", "schema.ConcreteInput"]
+output = ["schema.Diagnostic"]
+impl.lang = "ts"
+
+[func.observeState]
+intent = "DOM の属性・テキスト・入力値を抽象状態へ写像し、runner / app / unexplained の来歴を付ける。"
+input = ["schema.Binding"]
+output = ["schema.Observation", "schema.Diagnostic"]
+impl.lang = "ts"
+
+[func.selfTestAdapter]
+intent = "検証前に指定されたロケーター、読み取り、観測の健全性を検査し、失敗した証拠依存先を特定する。"
+input = ["schema.Binding"]
+output = ["schema.Diagnostic"]
+impl.lang = "ts"
+
+[func.teardownAdapter]
+intent = "セットアップ後の成功・失敗を問わず、ブラウザーコンテキストと所有するブラウザー資源を解放する。"
+output = ["schema.Diagnostic"]
+impl.lang = "ts"
+
+[mod.adapter]
+purpose = "Binding に基づくフレームワーク非依存の Playwright アダプター。FR-11〜15、NFR-01・03・04・06。"
+schemas = ["schema.Binding", "schema.Locator", "schema.Read", "schema.Action", "schema.ObservationRule", "schema.ObservationCase", "schema.BoundEvent", "schema.ConcreteInput", "schema.OracleRule", "schema.NetworkFixture", "schema.RuntimeConfig"]
+funcs = ["func.resolveBinding", "func.setupAdapter", "func.resetAdapter", "func.executeEvent", "func.observeState", "func.selfTestAdapter", "func.teardownAdapter"]
+boundary = { files = ["binding.json"], runtime = ["Playwright"] }

@@ -1,0 +1,33 @@
+require = ["mod.model", "mod.reporting"]
+
+[meta]
+name = "tidal_golden"
+version = "0.1.0"
+description = "Phase 2。FR-27〜29、AC-09・10。"
+
+[schema.GoldenCase]
+kind = "node"
+fields = { id = "string", spec = "schema.JsonValue", scope = "schema.RunScope", fixture = "string?", expected = "schema.GoldenExpectation" }
+
+[schema.GoldenExpectation]
+kind = "node"
+fields = { overall = "schema.Verdict", exitCode = "int", target = "schema.Target?", cause = "schema.Cause?", evidenceKind = "string?", requiredEvidenceFields = "string[]" }
+
+[func.runGoldenCases]
+intent = "draft-retention.golden-cases に基づく検証ケースを実行し、期待判定と不変条件を確認する。"
+input = ["schema.GoldenCase"]
+output = ["schema.Diagnostic"]
+design_notes = "正常な下書き保持、リロード時のデータ消失、ロケーター障害、再現性の不安定さを独立フィクスチャで再現する。模擬実装は実際の文字列を扱い、Model Engine の遷移関数を共有しない。モデル部分は同一入力で決定的に実行し、結果は項目単位で検査する。"
+impl.lang = "ts"
+
+[func.checkVerdictInvariants]
+intent = "確定証拠、モデルの決定性、観測不一致、実行スコープ、依存先障害に関する5つの判定不変条件を検査する。"
+input = ["schema.Report", "schema.GoldenExpectation"]
+output = ["schema.Diagnostic"]
+design_notes = "既存 Golden Suite の I1〜I5 との対応は元ケース確認時に固定する。モデルの確定違反とアダプターエラーが同居するケースで、全体判定と両方の証拠・診断・未評価情報を確認する。"
+impl.lang = "ts"
+
+[mod.golden]
+purpose = "ブラウザー不要の Golden Runner と独立フィクスチャ。実際のブラウザーでの共通受け入れ検証にも判定アサーションを再利用する。"
+schemas = ["schema.GoldenCase", "schema.GoldenExpectation"]
+funcs = ["func.runGoldenCases", "func.checkVerdictInvariants"]

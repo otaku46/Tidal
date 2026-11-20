@@ -1,0 +1,145 @@
+[meta]
+ir = "surv-behavior"
+name = "tidal_verdict"
+version = "0.1.0"
+
+# model を含む実行を代表例とし、ランタイム側の対象を選択できる。
+[behavior.verdict]
+owner = "mod.reporting"
+description = "独立した検証結果の集約。入力順序を任意とし、FR-19〜24 と AC-10 の判定・証拠保持を検査する。"
+terminal = "published"
+
+[behavior.verdict.vars]
+published = "bool"
+model = "enum(pending, passed, confirmed, incomplete, skipped, error)"
+conformance = "enum(pending, passed, divergence, adapter_error, skipped)"
+implementation = "enum(pending, passed, confirmed, flaky, blocked, skipped, error)"
+overall = "enum(pending, pass, confirmed, error, flaky, inconclusive)"
+exit_code = "int(0..3)"
+reported_model_violation = "bool"
+reported_adapter_error = "bool"
+reported_model_error = "bool"
+reported_implementation_error = "bool"
+reported_unassessed_implementation = "bool"
+
+[behavior.verdict.init]
+published = false
+model = "pending"
+conformance = "pending"
+implementation = "pending"
+overall = "pending"
+exit_code = 0
+reported_model_violation = false
+reported_adapter_error = false
+reported_model_error = false
+reported_implementation_error = false
+reported_unassessed_implementation = false
+
+[behavior.verdict.action.record_model_pass]
+guard = "model == 'pending'"
+update = { model = "'passed'" }
+
+[behavior.verdict.action.record_model_counterexample]
+guard = "model == 'pending'"
+update = { model = "'confirmed'", reported_model_violation = "true" }
+
+[behavior.verdict.action.record_model_exploration_limit]
+guard = "model == 'pending'"
+update = { model = "'incomplete'" }
+
+[behavior.verdict.action.skip_model]
+guard = "model == 'pending'"
+update = { model = "'skipped'" }
+
+[behavior.verdict.action.record_model_error]
+guard = "model == 'pending'"
+update = { model = "'error'", reported_model_error = "true" }
+
+[behavior.verdict.action.record_conformance_pass]
+guard = "conformance == 'pending'"
+update = { conformance = "'passed'" }
+
+[behavior.verdict.action.record_observation_mismatch]
+guard = "conformance == 'pending'"
+update = { conformance = "'divergence'" }
+
+[behavior.verdict.action.record_adapter_error]
+guard = "conformance == 'pending'"
+update = { conformance = "'adapter_error'", reported_adapter_error = "true" }
+
+[behavior.verdict.action.skip_conformance]
+guard = "conformance == 'pending'"
+update = { conformance = "'skipped'" }
+
+[behavior.verdict.action.record_implementation_pass]
+guard = "implementation == 'pending'"
+update = { implementation = "'passed'" }
+
+[behavior.verdict.action.record_valid_oracle_evidence]
+guard = "implementation == 'pending'"
+update = { implementation = "'confirmed'" }
+
+[behavior.verdict.action.record_unstable_oracle]
+guard = "implementation == 'pending'"
+update = { implementation = "'flaky'" }
+
+[behavior.verdict.action.record_blocked_oracle]
+guard = "implementation == 'pending'"
+update = { implementation = "'blocked'", reported_unassessed_implementation = "true" }
+
+[behavior.verdict.action.record_implementation_error]
+guard = "implementation == 'pending'"
+update = { implementation = "'error'", reported_implementation_error = "true" }
+
+[behavior.verdict.action.skip_implementation]
+guard = "implementation == 'pending'"
+update = { implementation = "'skipped'", reported_unassessed_implementation = "true" }
+
+[behavior.verdict.action.publish_confirmed]
+ref = "func.aggregateResults"
+guard = "not published and model != 'pending' and conformance != 'pending' and implementation != 'pending' and (model == 'confirmed' or implementation == 'confirmed')"
+update = { published = "true", overall = "'confirmed'", exit_code = "1" }
+
+[behavior.verdict.action.publish_error]
+ref = "func.aggregateResults"
+guard = "not published and model != 'pending' and conformance != 'pending' and implementation != 'pending' and model != 'confirmed' and implementation != 'confirmed' and (model == 'error' or conformance == 'adapter_error' or implementation == 'error')"
+update = { published = "true", overall = "'error'", exit_code = "3" }
+
+[behavior.verdict.action.publish_flaky]
+ref = "func.aggregateResults"
+guard = "not published and model != 'pending' and conformance != 'pending' and model != 'confirmed' and (model != 'error' and conformance != 'adapter_error' and implementation != 'error') and implementation == 'flaky'"
+update = { published = "true", overall = "'flaky'", exit_code = "2" }
+
+[behavior.verdict.action.publish_inconclusive]
+ref = "func.aggregateResults"
+guard = "not published and model != 'pending' and conformance != 'pending' and implementation != 'pending' and model != 'confirmed' and implementation != 'confirmed' and (model != 'error' and conformance != 'adapter_error' and implementation != 'error') and implementation != 'flaky' and (model == 'incomplete' or conformance == 'divergence' or implementation == 'blocked')"
+update = { published = "true", overall = "'inconclusive'", exit_code = "2" }
+
+[behavior.verdict.action.publish_pass]
+ref = "func.aggregateResults"
+guard = "not published and (model == 'passed' or model == 'skipped') and (conformance == 'passed' or conformance == 'skipped') and (implementation == 'passed' or implementation == 'skipped')"
+update = { published = "true", overall = "'pass'", exit_code = "0" }
+
+[behavior.verdict.invariant.confirmed_requires_valid_evidence]
+expr = "not published or ((overall == 'confirmed') == (model == 'confirmed' or implementation == 'confirmed'))"
+
+[behavior.verdict.invariant.adapter_error_has_priority_without_confirmed]
+expr = "not published or (model != 'error' and conformance != 'adapter_error' and implementation != 'error') or model == 'confirmed' or implementation == 'confirmed' or overall == 'error'"
+
+[behavior.verdict.invariant.flaky_has_priority_over_incomplete]
+expr = "not published or implementation != 'flaky' or model == 'confirmed' or model == 'error' or conformance == 'adapter_error' or overall == 'flaky'"
+
+[behavior.verdict.invariant.pass_requires_completed_scope]
+expr = "not published or ((overall == 'pass') == ((model == 'passed' or model == 'skipped') and (conformance == 'passed' or conformance == 'skipped') and (implementation == 'passed' or implementation == 'skipped')))"
+
+[behavior.verdict.invariant.mismatch_or_incomplete_requires_inconclusive]
+expr = "not published or model == 'confirmed' or implementation == 'confirmed' or model == 'error' or conformance == 'adapter_error' or implementation == 'error' or implementation == 'flaky' or (model != 'incomplete' and conformance != 'divergence' and implementation != 'blocked') or overall == 'inconclusive'"
+
+[behavior.verdict.invariant.report_retains_independent_outcomes]
+expr = "not published or (reported_model_violation == (model == 'confirmed') and reported_adapter_error == (conformance == 'adapter_error') and reported_model_error == (model == 'error') and reported_implementation_error == (implementation == 'error') and reported_unassessed_implementation == (implementation == 'blocked' or implementation == 'skipped'))"
+
+[behavior.verdict.invariant.exit_code_matches_overall]
+expr = "not published or ((overall == 'pass' and exit_code == 0) or (overall == 'confirmed' and exit_code == 1) or ((overall == 'flaky' or overall == 'inconclusive') and exit_code == 2) or (overall == 'error' and exit_code == 3))"
+
+[behavior.verdict.check]
+check_deadlock = true

@@ -1,0 +1,214 @@
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import type {
+  AbstractState,
+  Diagnostic,
+  Observation,
+  Scalar,
+} from "./ir.ts";
+import type {
+  Action,
+  Binding,
+  ConcreteInput,
+  Locator,
+  Read,
+  RuntimeConfig,
+} from "./binding.ts";
+import type { ObserveResult, ReadResult, UXAdapter } from "./adapter.ts";
+
+function diag(code: string, message: string): Diagnostic {
+  return { code, message };
+}
+
+function locatorKey(l: Locator): string {
+  return `${l.kind}:${l.value}${l.name ? ":" + l.name : ""}`;
+}
+
+// FR-12: 共通 Playwright アダプター。フレームワーク非依存で DOM/ARIA/testid を使う。
+export class PlaywrightAdapter implements UXAdapter {
+  private browser?: Browser;
+  private context?: BrowserContext;
+  private page?: Page;
+  private config: RuntimeConfig;
+  private baseUrl: string;
+  private binding?: Binding;
+
+  constructor(binding: Binding, config: RuntimeConfig) {
+    this.binding = binding;
+    this.baseUrl = binding.baseUrl;
+    this.config = config;
+  }
+
+  private pwLocator(l: Locator) {
+    const page = this.page!;
+    switch (l.kind) {
+      case "role":
+        return page.getByRole(l.value as never, l.name ? { name: l.name } : undefined);
+      case "ariaLabel":
+        return page.getByLabel(l.value);
+      case "testId":
+        return page.getByTestId(l.value);
+    }
+  }
+
+  private async newContext(): Promise<void> {
+    this.context = await this.browser!.newContext();
+    this.page = await this.context.newPage();
+  }
+
+  async setup(): Promise<Diagnostic[]> {
+    try {
+      this.browser = await chromium.launch();
+      await this.newContext();
+      await this.page!.goto(this.baseUrl, { waitUntil: "load" });
+      return [];
+    } catch (e) {
+      return [diag("ADAPTER_ERROR", `setup 失敗: ${(e as Error).message}`)];
+    }
+  }
+
+  async reset(_attempt = 0): Promise<Diagnostic[]> {
+    // NFR-03: テストごとに独立ブラウザーコンテキストで隔離
+    try {
+      await this.context?.close();
+      await this.newContext();
+      await this.page!.goto(this.baseUrl, { waitUntil: "load" });
+      return [];
+    } catch (e) {
+      return [diag("ADAPTER_ERROR", `reset 失敗: ${(e as Error).message}`)];
+    }
+  }
+
+  async act(actions: Action[], inputs: ConcreteInput[]): Promise<Diagnostic[]> {
+    const out: Diagnostic[] = [];
+    for (const a of actions) {
+      try {
+        switch (a.kind) {
+          case "navigate":
+            await this.page!.goto(new URL(a.path ?? "/", this.baseUrl).toString(), {
+              waitUntil: "load",
+            });
+            break;
+          case "click":
+            await this.pwLocator(a.locator!).click({ timeout: this.config.timeoutMs });
+            break;
+          case "fill": {
+            const input = inputs.find((i) => i.id === a.inputId);
+            await this.pwLocator(a.locator!).fill(input?.value ?? a.value ?? "", {
+              timeout: this.config.timeoutMs,
+            });
+            break;
+          }
+          case "reload":
+            await this.page!.reload({ waitUntil: "load" });
+            break;
+          case "back":
+            await this.page!.goBack({ waitUntil: "load" });
+            break;
+          case "wait": {
+            if (a.condition && a.expected !== undefined) {
+              const deadline = Date.now() + this.config.timeoutMs;
+              for (;;) {
+                const r = await this.read(a.condition);
+                if (r.value === a.expected) break;
+                if (Date.now() > deadline) {
+                  out.push(diag("ADAPTER_ERROR", "wait 条件がタイムアウトしました"));
+                  return out;
+                }
+                await this.page!.waitForTimeout(50);
+              }
+            }
+            break;
+          }
+        }
+      } catch (e) {
+        out.push(
+          diag(
+            "ADAPTER_ERROR",
+            `action ${a.kind} 失敗 (${locatorKey(a.locator ?? { kind: "testId", value: "" })}): ${(e as Error).message}`,
+          ),
+        );
+        return out;
+      }
+    }
+    return out;
+  }
+
+  async execute(bound: { event: string; actions: Action[] }, inputs: ConcreteInput[]) {
+    return this.act(bound.actions, inputs);
+  }
+
+  async read(read: Read): Promise<ReadResult> {
+    try {
+      const loc = this.pwLocator(read.locator);
+      let value: Scalar | undefined;
+      if (read.kind === "attribute" && read.attribute) {
+        value = (await loc.getAttribute(read.attribute, { timeout: this.config.timeoutMs })) ?? undefined;
+      } else if (read.kind === "value") {
+        value = await loc.inputValue({ timeout: this.config.timeoutMs });
+      } else {
+        value = await loc.innerText({ timeout: this.config.timeoutMs });
+      }
+      if (value === undefined || value === null) {
+        return { diagnostics: [diag("ADAPTER_ERROR", `read が値を返しません: ${locatorKey(read.locator)}`)] };
+      }
+      return { value, diagnostics: [] };
+    } catch (e) {
+      return {
+        diagnostics: [
+          diag("ADAPTER_ERROR", `read 失敗 (${locatorKey(read.locator)}): ${(e as Error).message}`),
+        ],
+      };
+    }
+  }
+
+  async observe(): Promise<ObserveResult> {
+    const values = new Map<string, Scalar>();
+    const diagnostics: Diagnostic[] = [];
+    for (const rule of this.bindingObserve()) {
+      const r = await this.read(rule.source);
+      diagnostics.push(...r.diagnostics);
+      if (r.diagnostics.length > 0 || r.value === undefined) {
+        return { diagnostics: r.diagnostics.length ? r.diagnostics : [diag("ADAPTER_ERROR", "観測失敗")] };
+      }
+      const c = rule.cases.find((c) => c.observed === r.value);
+      if (!c) {
+        return {
+          diagnostics: [
+            diag("OBSERVE_UNMAPPED", `観測値 ${JSON.stringify(r.value)} に対応する抽象値がありません: ${rule.variable}`),
+          ],
+        };
+      }
+      values.set(rule.variable, c.abstract);
+    }
+    const state: AbstractState = {
+      values: [...values.entries()]
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([variable, value]) => ({ variable, value })),
+    };
+    const observation: Observation = { state, provenance: "runner" };
+    return { observation, diagnostics };
+  }
+
+  private bindingObserve() {
+    return this.binding?.observe ?? [];
+  }
+
+  async selfTest(): Promise<Diagnostic[]> {
+    const out: Diagnostic[] = [];
+    for (const r of this.binding?.selfTest ?? []) {
+      const res = await this.read(r);
+      out.push(...res.diagnostics);
+    }
+    return out;
+  }
+
+  async teardown(): Promise<Diagnostic[]> {
+    try {
+      await this.context?.close();
+      await this.browser?.close();
+      return [];
+    } catch (e) {
+      return [diag("ADAPTER_ERROR", `teardown 失敗: ${(e as Error).message}`)];
+    }
+  }
+}
