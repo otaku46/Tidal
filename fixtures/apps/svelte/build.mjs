@@ -1,16 +1,18 @@
-// Compile App.svelte and bundle to a self-contained IIFE for fixtures/apps/svelte/app.js
+// Compile an App.svelte and bundle to a self-contained IIFE app.js next to it.
+// Usage: node fixtures/apps/svelte/build.mjs [appDir]   (default: this directory)
 import { compile } from "svelte/compiler";
 import { build } from "esbuild";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(here, "App.svelte"), "utf8");
+const appDir = resolve(process.argv[2] ?? here);
+const source = readFileSync(join(appDir, "App.svelte"), "utf8");
 const { js } = compile(source, { generate: "client", dev: false, css: "injected" });
 
-// keep build files inside the project so node_modules resolution works
-const dir = join(here, ".build");
+// keep build files inside the app dir so node_modules resolution works
+const dir = join(appDir, ".build");
 mkdirSync(dir, { recursive: true });
 const compPath = join(dir, "App.mjs");
 writeFileSync(compPath, js.code);
@@ -28,7 +30,7 @@ await build({
   entryPoints: [entry],
   bundle: true,
   format: "iife",
-  outfile: join(here, "app.js"),
+  outfile: join(appDir, "app.js"),
   logLevel: "warning",
 });
-console.log("built fixtures/apps/svelte/app.js");
+console.log(`built ${join(appDir, "app.js")}`);

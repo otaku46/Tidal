@@ -41,6 +41,8 @@ export interface RuntimeTrace {
 // internal: oracle results tagged with their rule
 export interface RuntimeTraceResult extends RuntimeTrace {
   oracleHits: { rule: OracleRule; result: ReplayResult }[];
+  // 実際に完了したイベント数（observations.length - 1 と同値、観測失敗時は途中まで）
+  completedSteps: number;
 }
 
 // Planned trace: schema.Trace + intended model steps (internal).
@@ -51,6 +53,15 @@ interface PlannedTrace extends Trace {
 function diag(code: string, message: string): Diagnostic {
   return { code, message };
 }
+
+// FR-29: coverage.complete の定義をレポートに明記する
+const COVERAGE_DEFINITION =
+  "edge-obligation: 各 (from状態, event) 選択点へ最短経路で1トレースを生成し実行する。" +
+  "complete は全 obligation がトレース化され最後のイベントまで実行完了したことを意味し、" +
+  "同一選択点への異なる経路や env 全分岐の個別実行は保証しない。";
+
+// FR-26/Q8: 反例トレース最小化の既定試行上限
+const DEFAULT_MINIMIZE_ATTEMPTS = 8;
 
 // func.generateTraces: coverage obligations → deterministic traces
 export function generateTraces(
@@ -80,12 +91,27 @@ export function generateTraces(
     });
   };
 
-  const byTransition = new Map<string, ModelStep>();
+  // obligation は (from 状態, event) の選択点単位。同一イベントが複数の起点状態から
+  // 発火する場合、起点ごとの挙動差を検出できるよう全選択点をカバーする。
+  // env の非決定など同一 (from, event) の複数行き先は1つの obligation を共有する
+  // （conformance は記録済み辺の全候補を許容するため、分岐ごとの個別トレースは張らない）。
+  const byChoice = new Map<string, { fromKey: string; edge: ModelStep }>();
   for (const e of graph.edges) {
-    if (!byTransition.has(e.transition)) byTransition.set(e.transition, e);
+    const fromKey = stateKey(e.from);
+    const key = `${fromKey}\u0000${e.event}`;
+    if (!byChoice.has(key)) byChoice.set(key, { fromKey, edge: e });
   }
-  for (const [tid, edge] of byTransition) {
-    push(`transition:${tid}`, edge);
+  const obligationEdges = [...byChoice.values()].sort((a, b) =>
+    a.fromKey === b.fromKey
+      ? a.edge.event < b.edge.event
+        ? -1
+        : 1
+      : a.fromKey < b.fromKey
+        ? -1
+        : 1,
+  );
+  for (const { fromKey, edge } of obligationEdges) {
+    push(`event:${edge.event}@${fromKey}`, edge);
   }
 
   for (const rule of binding.oracles) {
@@ -270,7 +296,7 @@ export async function runTrace(
     }
   } else {
     diagnostics.push(diag("ADAPTER_ERROR", "初期観測に失敗しました"));
-    return { trial, expectedSteps: planned.steps, observations, oracleResults, diagnostics, oracleHits };
+    return { trial, expectedSteps: planned.steps, observations, oracleResults, diagnostics, oracleHits, completedSteps: 0 };
   }
 
   let cursorKey = stateKey(planned.initial);
@@ -289,23 +315,42 @@ export async function runTrace(
     diagnostics.push(...execDiags);
     if (execDiags.some((d) => d.code === "ADAPTER_ERROR")) break;
 
+    // appMarker: 実装側の応答証跡。読めれば provenance="app"、
+    // 読めなければ来歴不明の変化として記録する (FR-14)。
+    let nextProvenance: Observation["provenance"] | undefined;
+    if (bound.appMarker) {
+      const m = await adapter.read(bound.appMarker);
+      if (m.diagnostics.length > 0 || m.value === undefined) {
+        diagnostics.push(
+          diag("UNEXPLAINED_CHANGE", `appMarker の読み取りに失敗: ${step.event}`),
+        );
+        nextProvenance = "unexplained";
+      } else {
+        nextProvenance = "app";
+      }
+    }
+
     const obs = await adapter.observe();
     diagnostics.push(...obs.diagnostics);
     if (obs.diagnostics.length > 0 || !obs.observation) break;
     const o = obs.observation;
+    if (nextProvenance) {
+      o.provenance = nextProvenance;
+      nextProvenance = undefined;
+    }
     observations.push(o);
     if (o.provenance === "unexplained") {
       diagnostics.push(diag("UNEXPLAINED_CHANGE", `来歴不明の変化: ${step.event}`));
     }
 
     const obsKey = stateKey(o.state);
-    // env nondeterminism: any recorded candidate branch from cursor is acceptable
+    // 許容されるのはモデルに記録された辺のみ（env の非決定分岐・set:{} 自己ループを含む）。
+    // イベントを無視した実装は「無変化」としては通さない (AC-04)。
     const candidates = new Set(
       graph.edges
         .filter((e) => e.event === step.event && stateKey(e.from) === cursorKey)
         .map((e) => stateKey(e.to)),
     );
-    if (obsKey === cursorKey) candidates.add(cursorKey);
     if (!candidates.has(obsKey)) {
       diagnostics.push(
         diag(
@@ -322,10 +367,19 @@ export async function runTrace(
       const r = await evaluateOracle(rule, trial, adapter, attempt);
       oracleResults.push(r);
       oracleHits.push({ rule, result: r });
+      // オラクル読み取り障害は adapter 依存の実行障害として run.diagnostics にも流す
+      if (r.outcome === "ERROR" && r.diagnostic) {
+        diagnostics.push(r.diagnostic);
+      }
     }
   }
 
-  return { trial, expectedSteps: planned.steps, observations, oracleResults, diagnostics, oracleHits };
+  // observations[0] は初期状態、以降1観測=1完了イベント
+  const completedSteps = Math.min(
+    planned.steps.length,
+    Math.max(0, observations.length - 1),
+  );
+  return { trial, expectedSteps: planned.steps, observations, oracleResults, diagnostics, oracleHits, completedSteps };
 }
 
 // func.replayViolation: same trace / inputs / conditions, N attempts (FR-18)
@@ -345,10 +399,63 @@ export async function replayViolation(
   return runs;
 }
 
+// func.minimizeTrace: 反例トレースからステップを貪欲に削除し、
+// reproduces が真を返す最小のトレースを探す。試行回数は minimizeAttempts で上限化する。
+// 戻り値の rt は採用されたトレースの再現ラン（削除に成功しなければ baseRt）。
+async function minimizeTrace(
+  planned: PlannedTrace,
+  baseRt: RuntimeTraceResult,
+  reproduces: (run: RuntimeTraceResult) => boolean,
+  binding: Binding,
+  graph: ModelGraph,
+  adapter: UXAdapter,
+  inputs: ConcreteInput[],
+  config: RuntimeConfig,
+): Promise<{ planned: PlannedTrace; rt: RuntimeTraceResult; minimized: boolean }> {
+  const budget = config.minimizeAttempts ?? DEFAULT_MINIMIZE_ATTEMPTS;
+  let current = planned;
+  let currentRt = baseRt;
+  if (budget <= 0) return { planned: current, rt: currentRt, minimized: false };
+
+  let attempts = 0;
+  let i = 0;
+  while (i < current.steps.length && attempts < budget) {
+    const steps = current.steps.filter((_, j) => j !== i);
+    if (steps.length === 0) break;
+    attempts++;
+    const cand: PlannedTrace = {
+      ...current,
+      steps,
+      eventIds: steps.map((s) => s.event),
+    };
+    await adapter.reset(0);
+    const run = await runTrace(cand, binding, graph, adapter, inputs, config, 0);
+    if (reproduces(run)) {
+      current = cand;
+      currentRt = run;
+      // 削除成功時は同じ index を再試行する（詰まった次のステップを試す）
+    } else {
+      i++;
+    }
+  }
+  return {
+    planned: current,
+    rt: currentRt,
+    minimized: current.steps.length < planned.steps.length,
+  };
+}
+
+// 明示的な決定表:
+//   hasError && hasMismatch && !hasMatch → INCONCLUSIVE (ADAPTER_ERROR)
+//   hasError (その他)                  → ERROR (ADAPTER_ERROR)
+//   !hasError && hasMismatch && !hasMatch → CONFIRMED
+//   !hasError && hasMatch && hasMismatch  → FLAKY
+//   それ以外                            → PASS
 function oracleCheckResult(
   property: string,
   hits: { result: ReplayResult }[],
   rt: RuntimeTraceResult,
+  minimized = false,
 ): CheckResult {
   const all: ReplayResult[] = hits.map((h) => h.result);
   const outcomes = all.map((r) => r.outcome);
@@ -360,8 +467,7 @@ function oracleCheckResult(
   let causes: Cause[] = [];
   let evidence: Evidence[] = [];
 
-  if (!hasError && hasMismatch && !hasMatch) {
-    verdict = "CONFIRMED";
+  if (hasMismatch) {
     const mism = all.find((r) => r.outcome === "MISMATCH")!;
     const counterexample: Counterexample = {
       initial: rt.trial.trace.initial,
@@ -370,7 +476,7 @@ function oracleCheckResult(
       observations: rt.observations,
       expectedValue: mism.expectedValue,
       actualValue: mism.actualValue,
-      minimized: false,
+      minimized,
     };
     evidence = [
       {
@@ -381,11 +487,20 @@ function oracleCheckResult(
         dependencies: ["adapter", "oracle"],
       },
     ];
-  } else if (!hasError && hasMatch && hasMismatch) {
+  }
+
+  if (hasError) {
+    if (hasMismatch && !hasMatch) {
+      verdict = "INCONCLUSIVE";
+      causes = ["ADAPTER_ERROR"];
+    } else {
+      verdict = "ERROR";
+      causes = ["ADAPTER_ERROR"];
+    }
+  } else if (hasMismatch && !hasMatch) {
+    verdict = "CONFIRMED";
+  } else if (hasMatch && hasMismatch) {
     verdict = "FLAKY";
-  } else if (hasError && !(hasMismatch && !hasMatch)) {
-    verdict = "ERROR";
-    causes = ["ADAPTER_ERROR"];
   } else {
     verdict = "PASS";
   }
@@ -460,32 +575,89 @@ export async function runRuntimeChecks(
 
   const inputs = makeInputs(binding, config.seed);
   const conformanceResults: CheckResult[] = [];
-  // property -> {hits from attempt 0, runtime traces for replay}
-  const oracleAcc = new Map<string, { hits: { result: ReplayResult }[]; rts: RuntimeTraceResult[] }>();
+  const incompleteObligations = new Set<string>();
+  // property -> attempt0 のヒット（結果・トレース・計画を保持）
+  const oracleAcc = new Map<
+    string,
+    { hits: { result: ReplayResult; rt: RuntimeTraceResult; planned: PlannedTrace }[] }
+  >();
 
   for (const [ti, planned] of traces.entries()) {
     await adapter.reset(0);
     const rt = await runTrace(planned, binding, graph, adapter, inputs, config, 0);
     diagnostics.push(...rt.diagnostics.filter((d) => d.code !== "MODEL_DIVERGENCE" && d.code !== "UNEXPLAINED_CHANGE"));
 
+    // 途中で止まったトレースの obligation は未完了として記録する（FR-29）
+    if (rt.completedSteps < planned.steps.length) {
+      const hadAdapterErr = rt.diagnostics.some((d) => d.code === "ADAPTER_ERROR");
+      for (const ob of planned.obligations) {
+        const t: "conformance" | "implementation" = ob.startsWith("oracle:")
+          ? "implementation"
+          : "conformance";
+        if (!effective.has(t)) continue;
+        notEvaluated.push({
+          target: t,
+          property: ob,
+          reason: "INCOMPLETE",
+          cause: hadAdapterErr ? "ADAPTER_ERROR" : "COVERAGE_SHORT",
+        });
+        incompleteObligations.add(ob);
+      }
+    }
+
     if (wantConf) {
       const divs = rt.diagnostics.filter((d) => d.code === "MODEL_DIVERGENCE");
       const unexplained = rt.diagnostics.filter((d) => d.code === "UNEXPLAINED_CHANGE");
       const adapterErrs = rt.diagnostics.filter((d) => d.code === "ADAPTER_ERROR");
       const property = `trace:${ti}`;
+      // 不一致の再現性を再実行で記録する（verdict は INCONCLUSIVE のまま変えない）
+      const replayResults: ReplayResult[] = [];
+      let cxRt = rt;
+      let minimized = false;
+      const hasDivergence = divs.length > 0 || unexplained.length > 0;
+      if (hasDivergence && adapterErrs.length === 0) {
+        if (config.replayAttempts > 0) {
+          const runs = await replayViolation(
+            planned, binding, graph, adapter, inputs, config,
+          );
+          for (const [i, run] of runs.entries()) {
+            const aerr = run.diagnostics.some((d) => d.code === "ADAPTER_ERROR");
+            const repro = run.diagnostics.some(
+              (d) => d.code === "MODEL_DIVERGENCE" || d.code === "UNEXPLAINED_CHANGE",
+            );
+            replayResults.push({
+              attempt: i + 1,
+              outcome: aerr ? "ERROR" : repro ? "MISMATCH" : "MATCH",
+            });
+          }
+        }
+        // 同一の不一致（診断メッセージ一致）だけを再現とみなす。
+        // 別原因の不一致にすり替わる最小化を防ぐ。
+        const targetMsgs = new Set([...divs, ...unexplained].map((d) => d.message));
+        const min = await minimizeTrace(
+          planned,
+          rt,
+          (run) =>
+            !run.diagnostics.some((d) => d.code === "ADAPTER_ERROR") &&
+            run.diagnostics.some((d) => targetMsgs.has(d.message)),
+          binding, graph, adapter, inputs, config,
+        );
+        cxRt = min.rt;
+        minimized = min.minimized;
+      }
       const evidence: Evidence[] = [];
-      if (divs.length > 0 || unexplained.length > 0) {
+      if (hasDivergence) {
         evidence.push({
           id: `${property}:mismatch`,
           kind: "OBSERVATION_MISMATCH",
           counterexample: {
-            initial: rt.trial.trace.initial,
-            events: rt.trial.trace.eventIds,
-            modelSteps: rt.expectedSteps,
-            observations: rt.observations,
-            minimized: false,
+            initial: cxRt.trial.trace.initial,
+            events: cxRt.trial.trace.eventIds,
+            modelSteps: cxRt.expectedSteps,
+            observations: cxRt.observations,
+            minimized,
           },
-          replay: [],
+          replay: replayResults,
           dependencies: ["adapter"],
         });
       }
@@ -508,23 +680,9 @@ export async function runRuntimeChecks(
 
     if (wantImpl) {
       for (const h of rt.oracleHits) {
-        const acc = oracleAcc.get(h.rule.property) ?? { hits: [], rts: [] };
-        acc.hits.push({ result: h.result });
-        acc.rts.push(rt);
+        const acc = oracleAcc.get(h.rule.property) ?? { hits: [] };
+        acc.hits.push({ result: h.result, rt, planned });
         oracleAcc.set(h.rule.property, acc);
-        // any mismatch → replay the whole trace for this property
-        if (h.result.outcome === "MISMATCH" && config.replayAttempts > 0) {
-          const replays = await replayViolation(planned, binding, graph, adapter, inputs, config);
-          for (const run of replays) {
-            for (const rh of run.oracleHits) {
-              if (rh.rule.property === h.rule.property) {
-                const a2 = oracleAcc.get(h.rule.property)!;
-                a2.hits.push({ result: rh.result });
-                a2.rts.push(run);
-              }
-            }
-          }
-        }
       }
     }
   }
@@ -533,8 +691,55 @@ export async function runRuntimeChecks(
 
   if (wantImpl) {
     for (const [property, acc] of [...oracleAcc.entries()].sort()) {
-      const rt = acc.rts[0];
-      results.push(oracleCheckResult(property, acc.hits, rt));
+      // property 単位で最初のミスマッチを記録し、そのトレースだけを再実行する
+      const firstMismatch = acc.hits.find((h) => h.result.outcome === "MISMATCH");
+      if (firstMismatch && config.replayAttempts > 0) {
+        const replays = await replayViolation(
+          firstMismatch.planned,
+          binding,
+          graph,
+          adapter,
+          inputs,
+          config,
+        );
+        for (const run of replays) {
+          for (const rh of run.oracleHits) {
+            if (rh.rule.property === property) {
+              acc.hits.push({
+                result: rh.result,
+                rt: run,
+                planned: firstMismatch.planned,
+              });
+            }
+          }
+        }
+      }
+      // 反例にはミスマッチを出したトレースを使う（なければ最初のヒット）
+      const firstRt = firstMismatch?.rt ?? acc.hits[0].rt;
+      let cxRt = firstRt;
+      let minimized = false;
+      if (firstMismatch) {
+        // FR-26/Q8: 不一致が再現する範囲でステップを削減した反例を使う
+        const min = await minimizeTrace(
+          firstMismatch.planned,
+          firstRt,
+          (run) =>
+            run.oracleHits.some(
+              (h) => h.rule.property === property && h.result.outcome === "MISMATCH",
+            ),
+          binding, graph, adapter, inputs, config,
+        );
+        cxRt = min.rt;
+        minimized = min.minimized;
+      }
+      results.push(
+        oracleCheckResult(
+          property,
+          acc.hits.map((h) => ({ result: h.result })),
+          cxRt,
+          minimized,
+        ),
+      );
     }
     // oracle rules never exercised → not evaluated
     for (const rule of binding.oracles) {
@@ -560,6 +765,11 @@ export async function runRuntimeChecks(
     }
   }
 
+  const confObligations = missing.filter((m) => !m.startsWith("oracle:"));
+  const confMissing = [
+    ...confObligations,
+    ...[...incompleteObligations].filter((o) => !o.startsWith("oracle:")),
+  ];
   if (wantConf) {
     coverage.push({
       target: "conformance",
@@ -567,21 +777,28 @@ export async function runRuntimeChecks(
       transitions: [...coveredTransitions],
       events: [...coveredEvents].sort(),
       evaluatedProperties: conformanceResults.map((r) => r.property),
-      missingObligations: missing,
-      complete: missing.length === 0,
+      missingObligations: confMissing,
+      complete: confMissing.length === 0,
+      definition: COVERAGE_DEFINITION,
     });
   }
+  const implMissing = [
+    ...missing.filter((m) => m.startsWith("oracle:")),
+    ...binding.oracles
+      .filter((r) => !oracleAcc.has(r.property))
+      .map((r) => `oracle:${r.property}`),
+    ...[...incompleteObligations].filter((o) => o.startsWith("oracle:")),
+  ];
   if (wantImpl) {
     coverage.push({
       target: "implementation",
-      states: [],
-      transitions: [],
-      events: [],
+      states: [...observedStates.values()],
+      transitions: [...coveredTransitions],
+      events: [...coveredEvents].sort(),
       evaluatedProperties: [...oracleAcc.keys()],
-      missingObligations: binding.oracles
-        .filter((r) => !oracleAcc.has(r.property))
-        .map((r) => `oracle:${r.property}`),
-      complete: oracleAcc.size === binding.oracles.length,
+      missingObligations: implMissing,
+      complete: implMissing.length === 0,
+      definition: COVERAGE_DEFINITION,
     });
   }
 

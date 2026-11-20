@@ -34,18 +34,20 @@ export function normalizeState(state: AbstractState): AbstractState {
   };
 }
 
-export function stateEquals(a: AbstractState, b: AbstractState): boolean {
-  return stateKey(a) === stateKey(b);
-}
-
 export function evaluateExpression(
   expr: Expression,
   state: AbstractState,
 ): { value?: Scalar; diagnostic?: Diagnostic } {
   switch (expr.op) {
     case "literal":
+      if (expr.value === undefined) {
+        return { diagnostic: diag("EXPR_INVALID", "literal 式に value がありません") };
+      }
       return { value: expr.value };
     case "ref": {
+      if (expr.variable === undefined) {
+        return { diagnostic: diag("EXPR_INVALID", "ref 式に variable がありません") };
+      }
       const v = stateValue(state, expr.variable);
       if (v === undefined) {
         return {
@@ -58,7 +60,7 @@ export function evaluateExpression(
       return { value: v };
     }
     case "not": {
-      const r = evaluateExpression(expr.args[0], state);
+      const r = evaluateExpression(expr.args![0], state);
       if (r.diagnostic) return { diagnostic: r.diagnostic };
       if (typeof r.value !== "boolean") {
         return { diagnostic: diag("EXPR_TYPE", "not の引数は bool である必要があります") };
@@ -66,7 +68,7 @@ export function evaluateExpression(
       return { value: !r.value };
     }
     case "and": {
-      const l = evaluateExpression(expr.args[0], state);
+      const l = evaluateExpression(expr.args![0], state);
       if (l.diagnostic) return { diagnostic: l.diagnostic };
       if (l.value !== true) {
         if (typeof l.value !== "boolean") {
@@ -74,7 +76,7 @@ export function evaluateExpression(
         }
         return { value: false };
       }
-      const r = evaluateExpression(expr.args[1], state);
+      const r = evaluateExpression(expr.args![1], state);
       if (r.diagnostic) return { diagnostic: r.diagnostic };
       if (typeof r.value !== "boolean") {
         return { diagnostic: diag("EXPR_TYPE", "and の引数は bool である必要があります") };
@@ -82,13 +84,13 @@ export function evaluateExpression(
       return { value: r.value };
     }
     case "or": {
-      const l = evaluateExpression(expr.args[0], state);
+      const l = evaluateExpression(expr.args![0], state);
       if (l.diagnostic) return { diagnostic: l.diagnostic };
       if (typeof l.value !== "boolean") {
         return { diagnostic: diag("EXPR_TYPE", "or の引数は bool である必要があります") };
       }
       if (l.value === true) return { value: true };
-      const r = evaluateExpression(expr.args[1], state);
+      const r = evaluateExpression(expr.args![1], state);
       if (r.diagnostic) return { diagnostic: r.diagnostic };
       if (typeof r.value !== "boolean") {
         return { diagnostic: diag("EXPR_TYPE", "or の引数は bool である必要があります") };
@@ -97,9 +99,9 @@ export function evaluateExpression(
     }
     case "eq":
     case "ne": {
-      const l = evaluateExpression(expr.args[0], state);
+      const l = evaluateExpression(expr.args![0], state);
       if (l.diagnostic) return { diagnostic: l.diagnostic };
-      const r = evaluateExpression(expr.args[1], state);
+      const r = evaluateExpression(expr.args![1], state);
       if (r.diagnostic) return { diagnostic: r.diagnostic };
       if (typeof l.value !== typeof r.value) {
         return { diagnostic: diag("EXPR_TYPE", `${expr.op} の被演算子の型が一致しません`) };

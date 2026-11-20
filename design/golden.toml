@@ -17,7 +17,7 @@ fields = { overall = "schema.Verdict", exitCode = "int", target = "schema.Target
 intent = "draft-retention.golden-cases に基づく検証ケースを実行し、期待判定と不変条件を確認する。"
 input = ["schema.GoldenCase"]
 output = ["schema.Diagnostic"]
-design_notes = "正常な下書き保持、リロード時のデータ消失、ロケーター障害、再現性の不安定さを独立フィクスチャで再現する。模擬実装は実際の文字列を扱い、Model Engine の遷移関数を共有しない。モデル部分は同一入力で決定的に実行し、結果は項目単位で検査する。"
+design_notes = "正常な下書き保持、リロード時のデータ消失、ロケーター障害、再現性の不安定さを独立フィクスチャで再現する。模擬実装は実際の文字列を扱い、Model Engine の遷移関数を共有しない。モデル部分は同一入力で決定的に実行し、結果は項目単位で検査する。 実装: runGoldenCases(cases, runner) は runner: (case) => Promise<Report> を受け取り Diagnostic[] を返す。"
 impl.lang = "ts"
 
 [func.checkVerdictInvariants]

@@ -14,6 +14,7 @@ import { checkProperties } from "./properties.ts";
 import { aggregateResults, ALL_TARGETS, resolveScope } from "./reporting.ts";
 import { resolveBinding, type RuntimeConfig } from "./binding.ts";
 import { runRuntimeChecks } from "./runtime.ts";
+import { checkVerdictInvariants } from "./golden.ts";
 import { PlaywrightAdapter } from "./playwright-adapter.ts";
 import type { UXAdapter } from "./adapter.ts";
 import type { Binding } from "./binding.ts";
@@ -86,21 +87,10 @@ export async function verifyFrameworkFixtures(
   run.notEvaluated.push(...rt.notEvaluated);
 
   const report: Report = aggregateResults(run);
-  if (report.overall !== expected.overall) {
-    diags.push(
-      diag(
-        "ACCEPTANCE_VERDICT",
-        `${fixture.framework}: overall 期待 ${expected.overall} 実際 ${report.overall}`,
-      ),
-    );
-  }
-  if (report.exitCode !== expected.exitCode) {
-    diags.push(
-      diag(
-        "ACCEPTANCE_EXIT",
-        `${fixture.framework}: exitCode 期待 ${expected.exitCode} 実際 ${report.exitCode}`,
-      ),
-    );
+  // GoldenExpectation の全項目（overall/exitCode/target/cause/evidenceKind/
+  // requiredEvidenceFields）と I1〜I5 不変条件を照合する
+  for (const p of checkVerdictInvariants(report, expected)) {
+    diags.push({ ...p, message: `${fixture.framework}: ${p.message}` });
   }
   return diags;
 }

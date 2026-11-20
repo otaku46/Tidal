@@ -79,7 +79,7 @@ fields = { from = "schema.AbstractState", event = "string", transition = "string
 
 [schema.ModelGraph]
 kind = "node"
-fields = { initial = "schema.AbstractState", states = "schema.AbstractState[]", edges = "schema.ModelStep[]", deadlocks = "schema.AbstractState[]", unreachableEvents = "string[]", unexpanded = "schema.AbstractState[]", exhaustedLimits = "string[]", complete = "bool" }
+fields = { initial = "schema.AbstractState", states = "schema.AbstractState[]", edges = "schema.ModelStep[]", deadlocks = "schema.AbstractState[]", unreachableEvents = "string[]", unexpanded = "schema.AbstractState[]", exhaustedLimits = "string[]", complete = "boolean" }
 
 [schema.Target]
 kind = "value"
@@ -109,7 +109,7 @@ fields = { scope = "schema.RunScope", declaredTargets = "schema.Target[]", effec
 
 [schema.Coverage]
 kind = "node"
-fields = { target = "schema.Target", states = "schema.AbstractState[]", transitions = "string[]", events = "string[]", evaluatedProperties = "string[]", missingObligations = "string[]", complete = "bool" }
+fields = { target = "schema.Target", states = "schema.AbstractState[]", transitions = "string[]", events = "string[]", evaluatedProperties = "string[]", missingObligations = "string[]", complete = "boolean", definition = "string?" }
 
 [schema.Observation]
 kind = "node"
@@ -117,7 +117,7 @@ fields = { state = "schema.AbstractState", provenance = "runner|app|unexplained"
 
 [schema.Counterexample]
 kind = "node"
-fields = { initial = "schema.AbstractState?", events = "string[]", modelSteps = "schema.ModelStep[]", observations = "schema.Observation[]", unreachableFrom = "schema.AbstractState?", exploredFromWitness = "schema.AbstractState[]?", expectedValue = "schema.Scalar?", actualValue = "schema.Scalar?", minimized = "bool" }
+fields = { initial = "schema.AbstractState?", events = "string[]", modelSteps = "schema.ModelStep[]", observations = "schema.Observation[]", unreachableFrom = "schema.AbstractState?", exploredFromWitness = "schema.AbstractState[]?", expectedValue = "schema.Scalar?", actualValue = "schema.Scalar?", minimized = "boolean" }
 
 [schema.ReplayResult]
 kind = "node"
@@ -152,33 +152,35 @@ fields = { schemaVersion = "string", context = "schema.RunContext", overall = "s
 intent = "TypeScript DSL をバージョン付き JSON IR に変換する。"
 input = ["schema.DslDefinition"]
 output = ["schema.JsonValue"]
+design_notes = "実装: compileSpec(definition: DslDefinition) は JSON IR オブジェクトを返す。"
 impl.lang = "ts"
 
 [func.validateSpec]
 intent = "JSON Schema による構造検証と、参照・型・有限値域の意味検証を行う。"
 input = ["schema.JsonValue"]
 output = ["schema.UxSpec", "schema.Diagnostic"]
-design_notes = "対応する kind / schemaVersion とタグごとの必須フィールドを検査する。ID・値域の重複、初期値の過不足、未定義参照、型不一致を診断する。各変数の有限値域は単一の型とする。ガードとプロパティ述語は bool。比較は同じ型に限定し、値の暗黙変換を行わない。探索上限は安全整数で状態数は1以上、深度と遷移数は0以上。CLI の DSL 入力と JSON 入力で同じ検証を使う。"
+design_notes = "対応する kind / schemaVersion とタグごとの必須フィールドを検査する。ID・値域の重複、初期値の過不足、未定義参照、型不一致を診断する。各変数の有限値域は単一の型とする。ガードとプロパティ述語は bool。比較は同じ型に限定し、値の暗黙変換を行わない。探索上限は安全整数で状態数は1以上、深度と遷移数は0以上。CLI の DSL 入力と JSON 入力で同じ検証を使う。 実装: validateSpec(input: unknown) は { spec?, diagnostics } を返す。"
 impl.lang = "ts"
 
 [func.evaluateExpression]
 intent = "状態を参照して式木を純粋評価する。and / or は左から短絡評価する。"
 input = ["schema.Expression", "schema.AbstractState"]
 output = ["schema.Scalar", "schema.Diagnostic"]
+design_notes = "実装: evaluateExpression(expr, state) は { value?, diagnostic? } を返す。"
 impl.lang = "ts"
 
 [func.expandState]
 intent = "有効なイベントの遷移先を列挙する。"
 input = ["schema.UxSpec", "schema.AbstractState"]
 output = ["schema.ModelStep", "schema.Diagnostic"]
-design_notes = "偽のガードを除外し、空の set を自己ループとして記録する。更新式はすべて遷移前状態で評価して同時適用し、値域外を仕様エラーにする。同じ状態とイベントで user / browser の候補が異なる状態へ進む場合は仕様エラーとし、同一結果への規則 ID はカバレッジに保持する。env の候補は全分岐を保持する。"
+design_notes = "偽のガードを除外し、空の set を自己ループとして記録する。更新式はすべて遷移前状態で評価して同時適用し、値域外を仕様エラーにする。同じ状態とイベントで user / browser の候補が異なる状態へ進む場合は仕様エラーとし、同一結果への規則 ID はカバレッジに保持する。env の候補は全分岐を保持する。 実装: expandState(spec, state) は { steps, diagnostics, enabledTransitionIds } を返す。"
 impl.lang = "ts"
 
 [func.exploreModel]
 intent = "到達可能な状態とラベル付き遷移を決定的な幅優先探索で列挙する。"
 input = ["schema.UxSpec"]
 output = ["schema.ModelGraph", "schema.Diagnostic"]
-design_notes = "状態キーは変数 ID 順で正規化し、同じ深さでは発見順、出辺はイベント ID・遷移 ID 順とする。状態数は初期状態を含み、深度は初期状態を 0 とし、遷移数は自己ループを含む採用済み規則適用数。既知状態への辺も記録する。制限で出辺を省いた状態を未展開として保持する。デッドロックは有効イベントがゼロと判明した状態、到達不能イベントは完全探索で一度も有効にならなかったイベント。仕様エラーと探索不足を集約へ渡す。"
+design_notes = "状態キーは変数 ID 順で正規化し、同じ深さでは発見順、出辺はイベント ID・遷移 ID 順とする。状態数は初期状態を含み、深度は初期状態を 0 とし、遷移数は自己ループを含む採用済み規則適用数。既知状態への辺も記録する。制限で出辺を省いた状態を未展開として保持する。デッドロックは有効イベントがゼロと判明した状態、到達不能イベントは完全探索で一度も有効にならなかったイベント。仕様エラーと探索不足を集約へ渡す。 実装: exploreModel(spec) は { graph, diagnostics, parents, transitionIds, eventEnabled } を返す。complete は未展開ゼロかつ展開診断ゼロのとき真。"
 impl.lang = "ts"
 
 [func.checkProperties]
@@ -192,7 +194,7 @@ impl.lang = "ts"
 intent = "要求スコープと宣言された対象から実行対象を決定する。"
 input = ["schema.RunSelection"]
 output = ["schema.RunContext", "schema.NotEvaluated"]
-design_notes = "通常実行は宣言済み全対象。指定外は NOT_REQUESTED。明示的に要求された対象が実行できなければ BLOCKED として残す。空の明示スコープは入力エラーとして扱う。"
+design_notes = "通常実行は宣言済み全対象。指定外は NOT_REQUESTED。明示的に要求された対象が実行できなければ BLOCKED として残す。空の明示スコープは入力エラーとして扱う。 実装: resolveScope(selection, implemented?, extras?) は { context, notEvaluated } を返す。extras で seed/environment/reproduction を RunContext に載せる。SPEC_/EXPR_/BINDING_ 診断は ERROR、空の明示スコープは ERROR、要求済みで effective が空なら INCONCLUSIVE として aggregateResults が扱う。"
 impl.lang = "ts"
 
 [func.aggregateResults]
@@ -206,7 +208,7 @@ impl.lang = "ts"
 intent = "Node.js CLI から DSL または spec.json と実行設定を受け取り、report.json と終了コードを出力する。"
 input = ["schema.RunScope"]
 output = ["schema.Report"]
-design_notes = "Phase 1 の model スコープはブラウザー依存なしで動作する。入力検証・実行失敗時も診断と未評価対象を出力する。"
+design_notes = "Phase 1 の model スコープはブラウザー依存なしで動作する。入力検証・実行失敗時も診断と未評価対象を出力する。 実装: runCli(argv: string[]) は report.json を書き出し exit code (number) を返す。spec.json に加え .ts (DSL) 入力を受け付ける。"
 impl.lang = "ts"
 
 [mod.specification]

@@ -1,4 +1,4 @@
-import { DraftApp, LocatorFailureApp, MockAdapter, type MockApp } from "./adapter.ts";
+import { DraftApp, IgnoreFillApp, LocatorFailureApp, LosesSavedOnReloadApp, MockAdapter, OracleErrorApp, type MockApp } from "./adapter.ts";
 import type { Binding } from "./binding.ts";
 
 // FR-28: independent mock implementations for golden tests.
@@ -12,6 +12,12 @@ export function makeMockApp(name: string): MockApp {
     case "flaky":
       // loses draft on even attempts (incl. attempt 0) → replay mixes MATCH/MISMATCH
       return new DraftApp("flaky", (attempt) => attempt % 2 === 0);
+    case "ignores-edit":
+      return new IgnoreFillApp();
+    case "loses-saved-on-reload":
+      return new LosesSavedOnReloadApp();
+    case "oracle-error":
+      return new OracleErrorApp();
     case "locator-failure":
       return new LocatorFailureApp();
     default:

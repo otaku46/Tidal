@@ -1,0 +1,108 @@
+{
+  "schemaVersion": "0.1.0",
+  "kind": "tidal.uxSpec",
+  "states": [
+    { "id": "panel", "domain": ["closed", "open"] },
+    { "id": "note", "domain": ["empty", "fed"] }
+  ],
+  "initialState": {
+    "values": [
+      { "variable": "panel", "value": "closed" },
+      { "variable": "note", "value": "empty" }
+    ]
+  },
+  "events": [
+    { "id": "open", "kind": "user" },
+    { "id": "close", "kind": "user" },
+    { "id": "edit_note", "kind": "user" },
+    { "id": "reload", "kind": "browser" }
+  ],
+  "transitions": [
+    {
+      "id": "t_open",
+      "event": "open",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "panel" },
+        { "op": "literal", "value": "closed" }
+      ]},
+      "set": { "panel": { "op": "literal", "value": "open" } }
+    },
+    {
+      "id": "t_close",
+      "event": "close",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "panel" },
+        { "op": "literal", "value": "open" }
+      ]},
+      "set": { "panel": { "op": "literal", "value": "closed" } }
+    },
+    {
+      "id": "t_edit_note",
+      "event": "edit_note",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "panel" },
+        { "op": "literal", "value": "open" }
+      ]},
+      "set": { "note": { "op": "literal", "value": "fed" } }
+    },
+    {
+      "id": "t_reload",
+      "event": "reload",
+      "when": { "op": "literal", "value": true },
+      "set": {}
+    }
+  ],
+  "properties": [
+    {
+      "id": "only_close_closes_panel",
+      "kind": "neverTransition",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "panel" },
+        { "op": "literal", "value": "open" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "panel" },
+        { "op": "literal", "value": "closed" }
+      ]},
+      "unless": "close"
+    },
+    {
+      "id": "closed_can_be_opened",
+      "kind": "canReach",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "panel" },
+        { "op": "literal", "value": "closed" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "panel" },
+        { "op": "literal", "value": "open" }
+      ]}
+    },
+    {
+      "id": "open_is_escapable_by_user",
+      "kind": "escapable",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "panel" },
+        { "op": "literal", "value": "open" }
+      ]},
+      "by": "user"
+    },
+    {
+      "id": "note_survives_reload",
+      "kind": "neverTransition",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "note" },
+        { "op": "literal", "value": "fed" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "note" },
+        { "op": "literal", "value": "empty" }
+      ]}
+    }
+  ],
+  "analysis": {
+    "maxStates": 100,
+    "maxDepth": 10,
+    "maxTransitions": 10000
+  }
+}

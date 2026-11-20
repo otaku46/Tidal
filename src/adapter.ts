@@ -4,7 +4,7 @@ import type {
   Observation,
   Scalar,
 } from "./ir.ts";
-import type { Action, Binding, ConcreteInput, Locator, Read } from "./binding.ts";
+import type { Action, Binding, BoundEvent, ConcreteInput, Read } from "./binding.ts";
 import { stateKey } from "./eval.ts";
 
 // FR-11: 共通アダプター契約（概念上の最小契約 + read/selfTest）
@@ -21,7 +21,7 @@ export interface ReadResult {
 export interface UXAdapter {
   setup(): Promise<Diagnostic[]>;
   reset(attempt?: number): Promise<Diagnostic[]>;
-  execute(bound: { event: string; actions: Action[] }, inputs: ConcreteInput[]): Promise<Diagnostic[]>;
+  execute(bound: BoundEvent, inputs: ConcreteInput[]): Promise<Diagnostic[]>;
   act(actions: Action[], inputs: ConcreteInput[]): Promise<Diagnostic[]>;
   observe(): Promise<ObserveResult>;
   read(read: Read): Promise<ReadResult>;
@@ -110,7 +110,7 @@ export class DraftApp implements MockApp {
     return [];
   }
 
-  read(read: Read): Scalar | undefined {
+  read(read: Read, _attempt = 0): Scalar | undefined {
     const key = `${read.locator.kind}:${read.locator.value}`;
     if (key === "testId:draft-status") {
       if (this.draft === "") return "empty";
@@ -120,6 +120,47 @@ export class DraftApp implements MockApp {
       return read.kind === "value" ? this.draft : this.draft === "" ? "empty" : "dirty";
     }
     return undefined;
+  }
+}
+
+// edit イベントを無視する独立実装（AC-04: MODEL_DIVERGENCE → INCONCLUSIVE の検証用）
+export class IgnoreFillApp extends DraftApp {
+  constructor() {
+    super("ignores-edit", "never");
+  }
+  override perform(action: Action, inputs: ConcreteInput[], attempt: number): Diagnostic[] {
+    if (action.kind === "fill") return [];
+    return super.perform(action, inputs, attempt);
+  }
+}
+
+// saved 状態からの reload でのみ下書きを失う独立実装。
+// edge 単位カバレッジ（transition@from）の検証用: dirty/empty からの
+// reload は保持するが saved からの reload で消失する。
+export class LosesSavedOnReloadApp extends DraftApp {
+  constructor() {
+    super("loses-saved-on-reload", "never");
+  }
+  override perform(action: Action, inputs: ConcreteInput[], attempt: number): Diagnostic[] {
+    if (action.kind === "reload" && this.saved) {
+      this.draft = "";
+      this.saved = false;
+      return [];
+    }
+    return super.perform(action, inputs, attempt);
+  }
+}
+
+// attempt 0 は下書きを失う（MISMATCH）、attempt>=1 は oracle 読み取りが失敗する
+// 独立実装。決定表「MISMATCH + ERROR → INCONCLUSIVE」の検証用。
+export class OracleErrorApp extends DraftApp {
+  constructor() {
+    super("oracle-error", "always");
+  }
+  override read(read: Read, attempt: number): Scalar | undefined {
+    // oracle の actual(draft-input) のみ失敗させ、観測(draft-status)は成功させる
+    if (attempt >= 1 && read.locator.value === "draft-input") return undefined;
+    return super.read(read);
   }
 }
 
@@ -145,7 +186,7 @@ export class MockAdapter implements UXAdapter {
     return this.act(this.binding.reset, []);
   }
 
-  async execute(bound: { event: string; actions: Action[] }, inputs: ConcreteInput[]): Promise<Diagnostic[]> {
+  async execute(bound: BoundEvent, inputs: ConcreteInput[]): Promise<Diagnostic[]> {
     return this.act(bound.actions, inputs);
   }
 
@@ -232,10 +273,6 @@ export class MockAdapter implements UXAdapter {
   }
 }
 
-export function locatorKey(l: Locator): string {
-  return `${l.kind}:${l.value}${l.name ? ":" + l.name : ""}`;
-}
-
 export { stateKey };
 
 // ---- IR func wrappers (design/adapter.toml) ----
@@ -252,7 +289,7 @@ export function resetAdapter(adapter: UXAdapter, attempt?: number): Promise<Diag
 
 export function executeEvent(
   adapter: UXAdapter,
-  bound: { event: string; actions: Action[] },
+  bound: BoundEvent,
   inputs: ConcreteInput[],
 ): Promise<Diagnostic[]> {
   return adapter.execute(bound, inputs);

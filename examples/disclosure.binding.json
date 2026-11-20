@@ -1,0 +1,118 @@
+{
+  "schemaVersion": "0.1.0",
+  "events": [
+    {
+      "event": "open",
+      "actions": [
+        {
+          "kind": "click",
+          "locator": {
+            "kind": "testId",
+            "value": "toggle-button"
+          }
+        }
+      ]
+    },
+    {
+      "event": "close",
+      "actions": [
+        {
+          "kind": "click",
+          "locator": {
+            "kind": "testId",
+            "value": "toggle-button"
+          }
+        }
+      ]
+    },
+    {
+      "event": "edit_note",
+      "actions": [
+        {
+          "kind": "fill",
+          "locator": {
+            "kind": "testId",
+            "value": "note-input"
+          },
+          "inputId": "note-text"
+        }
+      ]
+    },
+    {
+      "event": "reload",
+      "actions": [
+        {
+          "kind": "reload"
+        }
+      ]
+    }
+  ],
+  "observe": [
+    {
+      "variable": "panel",
+      "source": {
+        "locator": {
+          "kind": "testId",
+          "value": "panel-status"
+        },
+        "kind": "text"
+      },
+      "cases": [
+        {
+          "observed": "closed",
+          "abstract": "closed"
+        },
+        {
+          "observed": "open",
+          "abstract": "open"
+        }
+      ]
+    },
+    {
+      "variable": "note",
+      "source": {
+        "locator": {
+          "kind": "testId",
+          "value": "note-status"
+        },
+        "kind": "text"
+      },
+      "cases": [
+        {
+          "observed": "empty",
+          "abstract": "empty"
+        },
+        {
+          "observed": "fed",
+          "abstract": "fed"
+        }
+      ]
+    }
+  ],
+  "oracles": [
+    {
+      "property": "note_survives_reload",
+      "inputId": "note-text",
+      "afterEvent": "reload",
+      "actual": {
+        "locator": {
+          "kind": "testId",
+          "value": "note-input"
+        },
+        "kind": "value"
+      }
+    }
+  ],
+  "setup": [],
+  "reset": [],
+  "network": [],
+  "selfTest": [
+    {
+      "locator": {
+        "kind": "testId",
+        "value": "panel-status"
+      },
+      "kind": "text"
+    }
+  ]
+}

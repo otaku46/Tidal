@@ -18,6 +18,12 @@ import type {
 
 export const ALL_TARGETS: Target[] = ["model", "conformance", "implementation"];
 
+// 仕様・式・binding の検証失敗は実行障害として ERROR に昇格する (FR-19)
+const FATAL_DIAG_PREFIXES = ["SPEC_", "EXPR_", "BINDING_"];
+function isFatalDiagnostic(d: Diagnostic): boolean {
+  return FATAL_DIAG_PREFIXES.some((p) => d.code.startsWith(p));
+}
+
 const VERDICT_EXIT: Record<Verdict, number> = {
   PASS: 0,
   CONFIRMED: 1,
@@ -119,6 +125,7 @@ export function aggregateResults(
   const adapterHealthy = !run.diagnostics.some(
     (d) => d.code === "ADAPTER_ERROR" || d.code === "ADAPTER_SELFTEST_FAILED",
   );
+  const fatalDiagnostics = run.diagnostics.filter(isFatalDiagnostic);
   const healthyDependencies = new Set<string>(["model", "spec", "oracle"]);
   if (adapterHealthy) healthyDependencies.add("adapter");
 
@@ -179,6 +186,16 @@ export function aggregateResults(
     (ne) => ne.reason === "BLOCKED" || ne.reason === "INCOMPLETE",
   );
 
+  // FR-24: 空の明示スコープは入力エラー。要求があったのに effective が空なら
+  // 未完了として INCONCLUSIVE（無条件 PASS にしない）。
+  const requestedTargets = run.context.scope.targets;
+  const emptyExplicitScope =
+    requestedTargets !== undefined && requestedTargets.length === 0;
+  const requestedButNothingEffective =
+    requestedTargets !== undefined &&
+    requestedTargets.length > 0 &&
+    run.context.effectiveTargets.length === 0;
+
   // target 別 verdict
   const targetResults: TargetResult[] = ALL_TARGETS.map((t) => {
     const st = states.get(t)!;
@@ -194,10 +211,16 @@ export function aggregateResults(
 
   // overall
   const anyConfirmed = [...states.values()].some((s) => s.confirmed);
-  const anyError = [...states.values()].some((s) => s.error) || !adapterHealthy;
+  const anyError =
+    [...states.values()].some((s) => s.error) ||
+    !adapterHealthy ||
+    fatalDiagnostics.length > 0 ||
+    emptyExplicitScope;
   const anyFlaky = [...states.values()].some((s) => s.flaky);
   const anyInconclusive =
-    [...states.values()].some((s) => s.inconclusive) || hasBlocked;
+    [...states.values()].some((s) => s.inconclusive) ||
+    hasBlocked ||
+    requestedButNothingEffective;
 
   let overall: Verdict;
   if (anyConfirmed) overall = "CONFIRMED";
@@ -216,7 +239,7 @@ export function aggregateResults(
     exitCode: VERDICT_EXIT[overall],
     targets: targetResults,
     confirmedViolations,
-    errors: run.diagnostics.filter((d) => d.code !== "MODEL_DEADLOCK" && d.code !== "MODEL_UNREACHABLE_EVENT"),
+    errors: run.diagnostics,
     notEvaluated: run.notEvaluated,
     coverage: run.coverage,
     evidence: allEvidence,

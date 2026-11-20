@@ -23,39 +23,46 @@ fields = { trial = "schema.Trial", expectedSteps = "schema.ModelStep[]", observa
 intent = "探索済みの遷移を通る決定的なトレースとカバレッジ義務を作る。"
 input = ["schema.ModelGraph", "schema.Binding"]
 output = ["schema.Trace", "schema.Coverage"]
-design_notes = "各到達規則の始点への最短接頭辞と当該イベントを候補にし、オラクルの入力から検証点まで到達する列も候補にする。実行不能・未観測の分岐は COVERAGE_SHORT の根拠として残す。イベント実行回数と実際に確認した分岐のカバレッジを区別する。"
+design_notes = "各到達規則の始点への最短接頭辞と当該イベントを候補にし、オラクルの入力から検証点まで到達する列も候補にする。実行不能・未観測の分岐は COVERAGE_SHORT の根拠として残す。イベント実行回数と実際に確認した分岐のカバレッジを区別する。 実装: generateTraces(graph, binding) は { traces: PlannedTrace[], missing: string[] } を返す。PlannedTrace は Trace に steps を加えた内部型。 obligation は event:<event>@<fromKey> 形式の (from状態, event) 選択点単位。同一 (from,event) の env 複数行き先は1 obligation で共有し、conformance は記録済み辺の全候補を許容する。coverage.complete は全 obligation のトレース化と最終イベントまでの実行完了を意味し、同一選択点への異なる経路や env 全分岐の個別実行は保証しない（Coverage.definition に明記）。トレース化不能な obligation と途中終了したトレースの obligation は notEvaluated INCOMPLETE に記録する。"
 impl.lang = "ts"
 
 [func.evaluateOracle]
 intent = "入力に使用した一意の具体値と、検証点で直接読み取った具体値を比較する。"
 input = ["schema.OracleRule", "schema.Trial"]
 output = ["schema.ReplayResult"]
-design_notes = "期待値は最初の試行の入力生成から保存し、再試行でも保持する。抽象値写像を経由せず、共有するロケーターや読み取りの健全性を証拠の有効条件に含める。読み取り障害は不一致とは区別する。"
+design_notes = "期待値は最初の試行の入力生成から保存し、再試行でも保持する。抽象値写像を経由せず、共有するロケーターや読み取りの健全性を証拠の有効条件に含める。読み取り障害は不一致とは区別する。 実装: evaluateOracle(rule, trial, adapter, attempt) は Promise<ReplayResult> を返す。"
 impl.lang = "ts"
 
 [func.runTrace]
 intent = "初期化から各イベントと観測・オラクル検証を実行し、モデルの許容結果と照合する。"
 input = ["schema.Trial", "schema.Binding", "schema.ModelGraph", "schema.RunContext"]
 output = ["schema.RuntimeTrace"]
-design_notes = "初期状態と操作後の観測を照合する。非決定の env は許容する全候補から観測に一致する分岐を扱う。観測だけの不一致は MODEL_DIVERGENCE、来歴不明の変化は UNEXPLAINED_CHANGE として保存する。アダプター障害で進めない検査と未到達の義務を記録し、独立した model 結果を保持する。"
+design_notes = "初期状態と操作後の観測を照合する。非決定の env は許容する全候補から観測に一致する分岐を扱う。観測だけの不一致は MODEL_DIVERGENCE、来歴不明の変化は UNEXPLAINED_CHANGE として保存する。アダプター障害で進めない検査と未到達の義務を記録し、独立した model 結果を保持する。 実装: runTrace(planned, binding, graph, adapter, inputs, config, attempt?) は Promise<RuntimeTraceResult> を返す。RuntimeTraceResult は RuntimeTrace に oracleHits を加えた内部型。無変化の無条件許容はせず、記録済み辺のみを候補とする。appMarker があれば provenance を app/unexplained に設定する。"
 impl.lang = "ts"
 
 [func.replayViolation]
 intent = "独立した具体値オラクルの違反を同じトレース、具体入力、モック条件で再実行する。"
 input = ["schema.RuntimeTrace", "schema.Binding", "schema.ModelGraph", "schema.RunContext"]
 output = ["schema.RuntimeTrace"]
-design_notes = "元の観測と全再試行を保持する。有効な一致・不一致が混在した場合は FLAKY。再試行回数と CONFIRMED に必要な閾値は Q1 として Golden Test と合わせて確定する。"
+design_notes = "元の観測と全再試行を保持する。有効な一致・不一致が混在した場合は FLAKY。再試行回数と CONFIRMED に必要な閾値は Q1 として Golden Test と合わせて確定する。 実装: replayViolation(planned, binding, graph, adapter, inputs, config) は Promise<RuntimeTraceResult[]> を返す。property 単位で最初のミスマッチのトレースのみを再実行する。 conformance の観測不一致も replayAttempts 回再実行し、各試行の再現有無を evidence.replay の ReplayResult（MISMATCH=再現, MATCH=不再現, ERROR=障害）として記録する。verdict は FR-21 により INCONCLUSIVE のままとする。"
+impl.lang = "ts"
+
+[func.minimizeTrace]
+intent = "反例トレースから不要なステップを削除し、違反が再現する最小のトレースを探す。"
+input = ["schema.Trace", "schema.Binding", "schema.ModelGraph"]
+output = ["schema.Trace"]
+design_notes = "FR-26/Q8 の段階導入として、ステップ削除の貪欲法を試行上限（RuntimeConfig.minimizeAttempts、既定8、CLI --minimize）付きで適用する。再現判定は対象の違反が同一に再現すること（oracle は同一 property の MISMATCH、conformance は同一診断メッセージ）。削減できた場合のみ Counterexample.minimized=true とし、events/modelSteps/observations は最小化後のトレースのものを使う。"
 impl.lang = "ts"
 
 [func.runRuntimeChecks]
 intent = "要求されたランタイム対象を実行し、対象別判定・証拠と未評価情報をレポート境界へ渡す。"
 input = ["schema.UxSpec", "schema.ModelGraph", "schema.Binding", "schema.RuntimeConfig", "schema.RunContext"]
 output = ["schema.RunResults"]
-design_notes = "トレース生成、アダプター自己テスト、試行ごとの隔離、同条件再実行を調整する。未実行の義務を PASS とせず、依存する検査を ADAPTER_ERROR または COVERAGE_SHORT で記録する。model を要求しない場合もトレース生成に必要な探索を行い、model の判定は NOT_REQUESTED として扱う。"
+design_notes = "トレース生成、アダプター自己テスト、試行ごとの隔離、同条件再実行を調整する。未実行の義務を PASS とせず、依存する検査を ADAPTER_ERROR または COVERAGE_SHORT で記録する。model を要求しない場合もトレース生成に必要な探索を行い、model の判定は NOT_REQUESTED として扱う。 実装: runRuntimeChecks(graph, binding, config, context, adapter) は Promise<RunResults> を返す。spec 引数は取らず、探索済み ModelGraph を受け取る。"
 impl.lang = "ts"
 
 [mod.runtime]
 purpose = "モデル起点のトレース生成、適合性・独立オラクル検査、再実行。FR-16〜18。"
 schemas = ["schema.Trace", "schema.Trial", "schema.RuntimeTrace"]
-funcs = ["func.generateTraces", "func.evaluateOracle", "func.runTrace", "func.replayViolation", "func.runRuntimeChecks"]
+funcs = ["func.generateTraces", "func.evaluateOracle", "func.runTrace", "func.replayViolation", "func.minimizeTrace", "func.runRuntimeChecks"]
 pipeline = ["func.runTrace -> func.replayViolation"]

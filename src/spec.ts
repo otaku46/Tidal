@@ -122,9 +122,9 @@ export function expressionType(
 ): "bool" | "int" | "string" | "unknown" {
   switch (expr.op) {
     case "literal":
-      return expr.op === "literal" ? typeOf(expr.value) : "unknown";
+      return expr.op === "literal" && expr.value !== undefined ? typeOf(expr.value) : "unknown";
     case "ref": {
-      const v = vars.get(expr.variable);
+      const v = expr.variable === undefined ? undefined : vars.get(expr.variable);
       if (!v) return "unknown";
       // domain is single-type per validateSpec; derive from first element
       return v.domain.length > 0 ? typeOf(v.domain[0]) : "unknown";

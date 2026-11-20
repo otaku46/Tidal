@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>disclosure solid</title></head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { createSignal, createEffect, createRoot } from "https://esm.sh/solid-js@1.9.3";
+
+const KEY = "tidal-disclosure";
+const NOTE_KEY = "tidal-disclosure-note";
+
+function App() {
+  const [open, setOpen] = createSignal(localStorage.getItem(KEY) === "open");
+  const [note, setNote] = createSignal(localStorage.getItem(NOTE_KEY) ?? "");
+  createEffect(() => localStorage.setItem(KEY, open() ? "open" : "closed"));
+  createEffect(() => localStorage.setItem(NOTE_KEY, note()));
+
+  const root = document.createElement("div");
+  const button = document.createElement("button");
+  button.setAttribute("data-testid", "toggle-button");
+  const panelStatus = document.createElement("span");
+  panelStatus.setAttribute("data-testid", "panel-status");
+  const noteStatus = document.createElement("span");
+  noteStatus.setAttribute("data-testid", "note-status");
+  const panel = document.createElement("div");
+  panel.setAttribute("data-testid", "panel");
+  panel.textContent = "details";
+  const input = document.createElement("input");
+  input.setAttribute("data-testid", "note-input");
+  root.append(button, panelStatus, noteStatus, panel, input);
+
+  button.addEventListener("click", () => setOpen(!open()));
+  input.addEventListener("input", (e) => setNote(e.target.value));
+
+  createEffect(() => {
+    button.textContent = open() ? "close" : "open";
+    panelStatus.textContent = open() ? "open" : "closed";
+    panel.style.display = open() ? "" : "none";
+    noteStatus.textContent = note() === "" ? "empty" : "fed";
+    input.value = note();
+  });
+  return root;
+}
+
+createRoot(() => {
+  document.getElementById("app").appendChild(App());
+});
+</script>
+</body>
+</html>

@@ -33,11 +33,12 @@ export interface AbstractState {
   values: StateValue[];
 }
 
-export type Expression =
-  | { op: "literal"; value: Scalar }
-  | { op: "ref"; variable: string }
-  | { op: "eq" | "ne" | "and" | "or"; args: [Expression, Expression] }
-  | { op: "not"; args: [Expression] };
+export interface Expression {
+  op: "literal" | "ref" | "eq" | "ne" | "not" | "and" | "or";
+  value?: Scalar;
+  variable?: string;
+  args?: Expression[];
+}
 
 export interface Event {
   id: string;
@@ -195,6 +196,7 @@ export interface Coverage {
   evaluatedProperties: string[];
   missingObligations: string[];
   complete: boolean;
+  definition?: string;
 }
 
 export interface RunResults {

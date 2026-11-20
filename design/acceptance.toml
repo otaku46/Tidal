@@ -10,10 +10,10 @@ kind = "node"
 fields = { framework = "react|solid|svelte", binding = "schema.JsonValue" }
 
 [func.verifyFrameworkFixtures]
-intent = "同一の draft-retention spec.json を React・Solid・Svelte のフィクスチャに適用する。"
+intent = "同一の spec.json（draft-retention / disclosure）を React・Solid・Svelte のフィクスチャに適用する。"
 input = ["schema.UxSpec", "schema.FrameworkFixture", "schema.GoldenExpectation"]
 output = ["schema.Diagnostic"]
-design_notes = "独立したサンプルアプリを共通 Playwright アダプターで操作・観測し、各アプリのロケーターは binding.json で指定する。"
+design_notes = "独立したサンプルアプリを共通 Playwright アダプターで操作・観測し、各アプリのロケーターは binding.json で指定する。draft-retention は react/solid/svelte の3 fixture、disclosure（panel 状態 + note 具体値オラクル、FR-28）も同じ3 fixture で検証する。binding は examples/disclosure.binding.json を共通定義とし、framework 別ファイルは extends で baseUrl のみ差し替える。 実装: verifyFrameworkFixtures(spec, fixture, expected, options?) は options.config/adapterFactory を取り Diagnostic[] を返す。照合は checkVerdictInvariants に委譲する。"
 impl.lang = "ts"
 
 [mod.acceptance]

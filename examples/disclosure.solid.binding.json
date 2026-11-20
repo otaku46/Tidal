@@ -1,0 +1,4 @@
+{
+  "extends": "./disclosure.binding.json",
+  "baseUrl": "http://localhost:4173/fixtures/apps/disclosure/solid/index.html"
+}

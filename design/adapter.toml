@@ -54,37 +54,42 @@ fields = { allowedOrigins = "string[]", timeoutMs = "int", replayAttempts = "int
 intent = "binding.json の構造、イベント ID、観測先、値域、許可された操作先を検証する。"
 input = ["schema.JsonValue", "schema.UxSpec", "schema.RuntimeConfig"]
 output = ["schema.Binding", "schema.Diagnostic"]
-design_notes = "ローカルまたは明示許可されたテスト環境の origin に操作を制限する。ナビゲーションやリダイレクトを含めて許可範囲を確認し、任意コードを Binding に含めない。"
+design_notes = "ローカルまたは明示許可されたテスト環境の origin に操作を制限する。ナビゲーションやリダイレクトを含めて許可範囲を確認し、任意コードを Binding に含めない。 実装: resolveBinding(input: unknown, spec, config) は { binding?, diagnostics } を返す。binding ファイルの読み込みは loadBindingJson(path) が担い、\"extends\" による親ファイル継承（トップレベル浅いマージ、配列は子が置換、相対パス、循環はエラー）をサポートする。フレームワーク共通の binding を1ファイルに集約し、接続先 baseUrl のみを子ファイルで差し替える用途を想定する。"
 impl.lang = "ts"
 
 [func.setupAdapter]
 intent = "Playwright を起動し、初回の隔離コンテキスト、明示的待機、決定的なネットワーク応答を準備する。"
 input = ["schema.Binding", "schema.RuntimeConfig"]
 output = ["schema.Diagnostic"]
+design_notes = "実装: setupAdapter(adapter: UXAdapter) は adapter.setup() に委譲する。"
 impl.lang = "ts"
 
 [func.resetAdapter]
 intent = "試行ごとにブラウザーコンテキストを作り直し、ストレージや Cookie を隔離して初期化手順を適用する。"
 input = ["schema.Binding"]
 output = ["schema.Diagnostic"]
+design_notes = "実装: resetAdapter(adapter: UXAdapter, attempt?) は adapter.reset(attempt) に委譲する。"
 impl.lang = "ts"
 
 [func.executeEvent]
 intent = "BoundEvent の操作を実行し、条件待機またはアプリ側の同期ポイントを使う。"
 input = ["schema.BoundEvent", "schema.ConcreteInput"]
 output = ["schema.Diagnostic"]
+design_notes = "実装: executeEvent(adapter, bound: BoundEvent, inputs) は adapter.execute に委譲する。"
 impl.lang = "ts"
 
 [func.observeState]
 intent = "DOM の属性・テキスト・入力値を抽象状態へ写像し、runner / app / unexplained の来歴を付ける。"
 input = ["schema.Binding"]
 output = ["schema.Observation", "schema.Diagnostic"]
+design_notes = "実装: observeState(adapter) は adapter.observe() を返す（{ observation?, diagnostics }）。"
 impl.lang = "ts"
 
 [func.selfTestAdapter]
 intent = "検証前に指定されたロケーター、読み取り、観測の健全性を検査し、失敗した証拠依存先を特定する。"
 input = ["schema.Binding"]
 output = ["schema.Diagnostic"]
+design_notes = "実装: selfTestAdapter(adapter) は adapter.selfTest() に委譲する。"
 impl.lang = "ts"
 
 [func.teardownAdapter]

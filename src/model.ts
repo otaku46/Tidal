@@ -252,7 +252,9 @@ export function exploreModel(spec: UxSpec): {
     }
   }
 
-  const complete = unexpanded.length === 0;
+  // 展開時の仕様エラー（ガード重複・式エラー等）で辺が捨てられた場合も
+  // 探索は不完全とみなす。unreachableEvents のゲートと同じ条件。
+  const complete = unexpanded.length === 0 && diagnostics.length === 0;
 
   const unreachableEvents =
     complete && diagnostics.length === 0

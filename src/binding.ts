@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+
 import type {
   AbstractState,
   Diagnostic,
@@ -83,10 +86,30 @@ export interface RuntimeConfig {
   timeoutMs: number;
   replayAttempts: number;
   seed: string;
+  // 反例トレース最小化の試行上限（FR-26/Q8）。未指定時は runtime 側の既定値。
+  minimizeAttempts?: number;
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// binding ファイルの読み込み。"extends" で親ファイルを継承できる。
+// マージはトップレベルの浅い上書きで、子のキーが優先される（配列は子が丸ごと置き換える）。
+// extends パスは記述ファイルからの相対パス。循環参照はエラー。
+export function loadBindingJson(path: string, seen: string[] = []): unknown {
+  const abs = resolve(path);
+  if (seen.includes(abs)) {
+    throw new Error(`binding extends が循環しています: ${abs}`);
+  }
+  const raw = JSON.parse(readFileSync(abs, "utf8")) as unknown;
+  if (!isObj(raw) || typeof raw.extends !== "string") return raw;
+  const parent = loadBindingJson(resolve(dirname(abs), raw.extends), [...seen, abs]);
+  if (!isObj(parent)) {
+    throw new Error(`extends 先がオブジェクトではありません: ${raw.extends}`);
+  }
+  const { extends: _drop, ...child } = raw;
+  return { ...parent, ...child };
 }
 
 function diag(code: string, message: string, path?: string): Diagnostic {

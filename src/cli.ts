@@ -1,19 +1,24 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { validateSpec } from "./spec.ts";
+import { compileSpec } from "./dsl.ts";
 import { exploreModel } from "./model.ts";
 import { checkProperties } from "./properties.ts";
 import { aggregateResults, ALL_TARGETS, resolveScope } from "./reporting.ts";
-import { resolveBinding, type RuntimeConfig } from "./binding.ts";
+import { resolveBinding, loadBindingJson, type RuntimeConfig } from "./binding.ts";
 import { runRuntimeChecks } from "./runtime.ts";
 import { makeMockAdapter } from "./fixtures.ts";
 import { PlaywrightAdapter } from "./playwright-adapter.ts";
 import type {
+  DslDefinition,
   ModelGraph,
   Report,
   RunResults,
   RunScope,
   RunSelection,
   Target,
+  UxSpec,
 } from "./ir.ts";
 
 export const IMPLEMENTED_TARGETS: Target[] = ["model", "conformance", "implementation"];
@@ -26,6 +31,7 @@ export interface CliOptions {
   fixture?: string;
   adapter?: "mock" | "playwright";
   replayAttempts?: number;
+  minimizeAttempts?: number;
 }
 
 function parseArgs(argv: string[]): { specPath?: string; options: CliOptions } {
@@ -48,6 +54,8 @@ function parseArgs(argv: string[]): { specPath?: string; options: CliOptions } {
       options.adapter = next() as "mock" | "playwright";
     } else if (a === "--replay" && argv[i + 1]) {
       options.replayAttempts = parseInt(next(), 10);
+    } else if (a === "--minimize" && argv[i + 1]) {
+      options.minimizeAttempts = parseInt(next(), 10);
     } else if (!a.startsWith("--")) {
       specPath = a;
     }
@@ -60,14 +68,50 @@ export async function runCli(argv: string[]): Promise<number> {
   const { specPath, options } = parseArgs(argv);
   if (!specPath) {
     console.error(
-      "usage: tidal <spec.json> [--targets model,conformance,implementation] [--binding binding.json] [--fixture name] [--out report.json] [--seed seed] [--replay n]",
+      "usage: tidal <spec.json|spec.ts> [--targets model,conformance,implementation] [--binding binding.json] [--fixture name] [--out report.json] [--seed seed] [--replay n] [--minimize n]",
     );
+    return 3;
+  }
+
+  // F6: target 名と adapter 名を検証する（未知値は入力エラー）
+  if (options.targets !== undefined) {
+    if (options.targets.length === 0) {
+      console.error("--targets が空です");
+      return 3;
+    }
+    const bad = options.targets.filter((t) => !ALL_TARGETS.includes(t));
+    if (bad.length > 0) {
+      console.error(`未知の target: ${bad.join(", ")} (有効: ${ALL_TARGETS.join(", ")})`);
+      return 3;
+    }
+  }
+  if (options.adapter !== undefined && options.adapter !== "mock" && options.adapter !== "playwright") {
+    console.error(`未知の adapter: ${String(options.adapter)}`);
     return 3;
   }
 
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(specPath, "utf8"));
+    if (/\.tsx?$/.test(specPath)) {
+      // F9: DSL (.ts) 入力。specification / spec / default のいずれかを受け付け、
+      // DslDefinition なら compileSpec で JSON IR に落とす。検証は validateSpec で共通。
+      const mod = (await import(pathToFileURL(resolve(specPath)).href)) as Record<
+        string,
+        unknown
+      >;
+      const candidate =
+        mod.specification ?? mod.spec ?? mod.default;
+      if (candidate === undefined || candidate === null || typeof candidate !== "object") {
+        console.error(`spec module から specification を取得できません: ${specPath}`);
+        return 3;
+      }
+      raw =
+        "specification" in (candidate as object)
+          ? compileSpec(candidate as DslDefinition)
+          : candidate;
+    } else {
+      raw = JSON.parse(readFileSync(specPath, "utf8"));
+    }
   } catch (e) {
     console.error(`failed to read/parse spec: ${(e as Error).message}`);
     return 3;
@@ -79,6 +123,14 @@ export async function runCli(argv: string[]): Promise<number> {
   const selection: RunSelection = { requested: scope, declared: [...ALL_TARGETS] };
   const { context, notEvaluated: scopeNotEvaluated } = resolveScope(selection, IMPLEMENTED_TARGETS, {
     seed: options.seed,
+    environment: {
+      adapter: options.adapter ?? "mock",
+      fixture: options.fixture,
+    },
+    reproduction: {
+      seed: options.seed ?? "default",
+      binding: options.binding,
+    },
   });
 
   const run: RunResults = {
@@ -116,7 +168,7 @@ export async function runCli(argv: string[]): Promise<number> {
         }
       } else {
         try {
-          const bindingRaw = JSON.parse(readFileSync(options.binding, "utf8"));
+          const bindingRaw = loadBindingJson(options.binding);
           let origin = "";
           try {
             origin = new URL((bindingRaw as { baseUrl?: string }).baseUrl ?? "").origin;
@@ -128,6 +180,7 @@ export async function runCli(argv: string[]): Promise<number> {
             timeoutMs: 5000,
             replayAttempts: options.replayAttempts ?? 2,
             seed: options.seed ?? "default",
+            minimizeAttempts: options.minimizeAttempts,
           };
           const { binding, diagnostics: bindDiags } = resolveBinding(bindingRaw, spec, config);
           run.diagnostics.push(...bindDiags);

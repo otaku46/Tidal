@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>disclosure react</title></head>
+<body>
+<div id="app"></div>
+<script type="module">
+import React, { useState, useEffect } from "https://esm.sh/react@18.3.1";
+import { createRoot } from "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1";
+import htm from "https://esm.sh/htm@3.1.1";
+
+const html = htm.bind(React.createElement);
+const KEY = "tidal-disclosure";
+const NOTE_KEY = "tidal-disclosure-note";
+
+function App() {
+  const [open, setOpen] = useState(() => localStorage.getItem(KEY) === "open");
+  const [note, setNote] = useState(() => localStorage.getItem(NOTE_KEY) ?? "");
+  useEffect(() => { localStorage.setItem(KEY, open ? "open" : "closed"); }, [open]);
+  useEffect(() => { localStorage.setItem(NOTE_KEY, note); }, [note]);
+  return html`
+    <div>
+      <button data-testid="toggle-button" onClick=${() => setOpen(!open)}>${open ? "close" : "open"}</button>
+      <span data-testid="panel-status">${open ? "open" : "closed"}</span>
+      <span data-testid="note-status">${note === "" ? "empty" : "fed"}</span>
+      ${open && html`<div data-testid="panel">details</div>`}
+      <input data-testid="note-input" value=${note} onChange=${(e) => setNote(e.target.value)} />
+    </div>`;
+}
+
+createRoot(document.getElementById("app")).render(html`<${App} />`);
+</script>
+</body>
+</html>

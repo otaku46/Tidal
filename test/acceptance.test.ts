@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { verifyFrameworkFixtures } from "../src/acceptance.ts";
+import { loadBindingJson } from "../src/binding.ts";
 import type { FrameworkFixture, UxSpec } from "../src/ir.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -18,6 +19,9 @@ const specJson = JSON.parse(
 const bindingTemplate = JSON.parse(
   readFileSync(join(root, "examples/draft-retention.binding.json"), "utf8"),
 );
+const disclosureSpecJson = JSON.parse(
+  readFileSync(join(root, "examples/disclosure.spec.json"), "utf8"),
+) as UxSpec;
 
 let server: ChildProcess;
 
@@ -46,6 +50,23 @@ for (const fw of ["react", "solid", "svelte"]) {
     binding.baseUrl = `http://localhost:${PORT}/fixtures/apps/${fw}/index.html`;
     const fixture: FrameworkFixture = { framework: fw as never, binding };
     const diags = await verifyFrameworkFixtures(specJson, fixture, {
+      overall: "PASS",
+      exitCode: 0,
+      requiredEvidenceFields: [],
+    });
+    assert.deepEqual(diags, []);
+  });
+}
+
+// disclosure: panel 状態 + note 具体値オラクル（FR-28）を3フレームワークで検証
+// binding は examples/disclosure.binding.json を extends で共有し baseUrl のみ差し替える
+for (const fw of ["react", "solid", "svelte"]) {
+  test(`acceptance: ${fw} disclosure`, async () => {
+    const binding = loadBindingJson(
+      join(root, `examples/disclosure.${fw}.binding.json`),
+    );
+    const fixture: FrameworkFixture = { framework: fw as never, binding };
+    const diags = await verifyFrameworkFixtures(disclosureSpecJson, fixture, {
       overall: "PASS",
       exitCode: 0,
       requiredEvidenceFields: [],

@@ -8,8 +8,10 @@ import type {
 import type {
   Action,
   Binding,
+  BoundEvent,
   ConcreteInput,
   Locator,
+  NetworkFixture,
   Read,
   RuntimeConfig,
 } from "./binding.ts";
@@ -23,6 +25,38 @@ function locatorKey(l: Locator): string {
   return `${l.kind}:${l.value}${l.name ? ":" + l.name : ""}`;
 }
 
+// binding.network の path は glob。"**" "*" "?" を含むパターンを URL に適用する。
+function globToRegExp(glob: string): RegExp {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        re += ".*";
+        i++;
+      } else {
+        re += "[^/]*";
+      }
+    } else if (c === "?") {
+      re += "[^/]";
+    } else {
+      re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${re}$`);
+}
+
+function fixtureMatches(fx: NetworkFixture, url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  const re = globToRegExp(fx.path);
+  return re.test(u.pathname + u.search) || re.test(url);
+}
+
 // FR-12: 共通 Playwright アダプター。フレームワーク非依存で DOM/ARIA/testid を使う。
 export class PlaywrightAdapter implements UXAdapter {
   private browser?: Browser;
@@ -31,6 +65,8 @@ export class PlaywrightAdapter implements UXAdapter {
   private config: RuntimeConfig;
   private baseUrl: string;
   private binding?: Binding;
+  // per-event networkFixture: 実行中のイベントが指定した fixture id
+  private activeFixtureId?: string;
 
   constructor(binding: Binding, config: RuntimeConfig) {
     this.binding = binding;
@@ -50,8 +86,34 @@ export class PlaywrightAdapter implements UXAdapter {
     }
   }
 
+  // 決定的なネットワーク応答: binding.network を route.fulfill で登録する。
+  // networkFixture 指定のイベント実行中はその fixture を優先する。
+  private selectFixture(url: string): NetworkFixture | undefined {
+    const fixtures = this.binding?.network ?? [];
+    const candidates = fixtures.filter((f) => fixtureMatches(f, url));
+    if (candidates.length === 0) return undefined;
+    candidates.sort((a, b) => (a.id < b.id ? -1 : 1));
+    if (this.activeFixtureId !== undefined) {
+      const active = candidates.find((f) => f.id === this.activeFixtureId);
+      if (active) return active;
+    }
+    return candidates[0];
+  }
+
   private async newContext(): Promise<void> {
     this.context = await this.browser!.newContext();
+    await this.context.route("**/*", async (route) => {
+      const fx = this.selectFixture(route.request().url());
+      if (!fx) {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: fx.status,
+        body: fx.body ?? "",
+        contentType: "application/json",
+      });
+    });
     this.page = await this.context.newPage();
   }
 
@@ -83,11 +145,20 @@ export class PlaywrightAdapter implements UXAdapter {
     for (const a of actions) {
       try {
         switch (a.kind) {
-          case "navigate":
-            await this.page!.goto(new URL(a.path ?? "/", this.baseUrl).toString(), {
-              waitUntil: "load",
-            });
+          case "navigate": {
+            const url = new URL(a.path ?? "/", this.baseUrl);
+            if (!this.config.allowedOrigins.includes(url.origin)) {
+              out.push(
+                diag(
+                  "ADAPTER_ERROR",
+                  `許可されていない origin への navigate: ${url.origin} (allowed: ${this.config.allowedOrigins.join(",")})`,
+                ),
+              );
+              return out;
+            }
+            await this.page!.goto(url.toString(), { waitUntil: "load" });
             break;
+          }
           case "click":
             await this.pwLocator(a.locator!).click({ timeout: this.config.timeoutMs });
             break;
@@ -133,8 +204,15 @@ export class PlaywrightAdapter implements UXAdapter {
     return out;
   }
 
-  async execute(bound: { event: string; actions: Action[] }, inputs: ConcreteInput[]) {
-    return this.act(bound.actions, inputs);
+  async execute(bound: BoundEvent, inputs: ConcreteInput[]) {
+    // per-event networkFixture: このイベントの actions 実行中のみ有効化する
+    const prev = this.activeFixtureId;
+    this.activeFixtureId = bound.networkFixture;
+    try {
+      return await this.act(bound.actions, inputs);
+    } finally {
+      this.activeFixtureId = prev;
+    }
   }
 
   async read(read: Read): Promise<ReadResult> {
