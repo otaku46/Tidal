@@ -445,12 +445,31 @@ async function minimizeTrace(
   };
 }
 
-// 明示的な決定表:
+// 明示的な決定表（同一トレースグループのヒット集合に適用）:
 //   hasError && hasMismatch && !hasMatch → INCONCLUSIVE (ADAPTER_ERROR)
 //   hasError (その他)                  → ERROR (ADAPTER_ERROR)
 //   !hasError && hasMismatch && !hasMatch → CONFIRMED
 //   !hasError && hasMatch && hasMismatch  → FLAKY
 //   それ以外                            → PASS
+function oracleVerdict(results: ReplayResult[]): {
+  verdict: CheckResult["verdict"];
+  causes: Cause[];
+} {
+  const outcomes = results.map((r) => r.outcome);
+  const hasError = outcomes.includes("ERROR");
+  const hasMatch = outcomes.includes("MATCH");
+  const hasMismatch = outcomes.includes("MISMATCH");
+  if (hasError) {
+    if (hasMismatch && !hasMatch) {
+      return { verdict: "INCONCLUSIVE", causes: ["ADAPTER_ERROR"] };
+    }
+    return { verdict: "ERROR", causes: ["ADAPTER_ERROR"] };
+  }
+  if (hasMismatch && !hasMatch) return { verdict: "CONFIRMED", causes: [] };
+  if (hasMatch && hasMismatch) return { verdict: "FLAKY", causes: [] };
+  return { verdict: "PASS", causes: [] };
+}
+
 function oracleCheckResult(
   property: string,
   hits: { result: ReplayResult }[],
@@ -458,16 +477,10 @@ function oracleCheckResult(
   minimized = false,
 ): CheckResult {
   const all: ReplayResult[] = hits.map((h) => h.result);
-  const outcomes = all.map((r) => r.outcome);
-  const hasError = outcomes.includes("ERROR");
-  const hasMatch = outcomes.includes("MATCH");
-  const hasMismatch = outcomes.includes("MISMATCH");
-
-  let verdict: CheckResult["verdict"];
-  let causes: Cause[] = [];
+  const { verdict, causes } = oracleVerdict(all);
   let evidence: Evidence[] = [];
 
-  if (hasMismatch) {
+  if (all.some((r) => r.outcome === "MISMATCH")) {
     const mism = all.find((r) => r.outcome === "MISMATCH")!;
     const counterexample: Counterexample = {
       initial: rt.trial.trace.initial,
@@ -487,22 +500,6 @@ function oracleCheckResult(
         dependencies: ["adapter", "oracle"],
       },
     ];
-  }
-
-  if (hasError) {
-    if (hasMismatch && !hasMatch) {
-      verdict = "INCONCLUSIVE";
-      causes = ["ADAPTER_ERROR"];
-    } else {
-      verdict = "ERROR";
-      causes = ["ADAPTER_ERROR"];
-    }
-  } else if (hasMismatch && !hasMatch) {
-    verdict = "CONFIRMED";
-  } else if (hasMatch && hasMismatch) {
-    verdict = "FLAKY";
-  } else {
-    verdict = "PASS";
   }
 
   return { target: "implementation", property, verdict, causes, evidence };
@@ -576,6 +573,8 @@ export async function runRuntimeChecks(
   const inputs = makeInputs(binding, config.seed);
   const conformanceResults: CheckResult[] = [];
   const incompleteObligations = new Set<string>();
+  // カバレッジは計画ではなく実行結果から集計するため、attempt0 のランを保持する
+  const executed: { planned: PlannedTrace; rt: RuntimeTraceResult }[] = [];
   // property -> attempt0 のヒット（結果・トレース・計画を保持）
   const oracleAcc = new Map<
     string,
@@ -585,6 +584,7 @@ export async function runRuntimeChecks(
   for (const [ti, planned] of traces.entries()) {
     await adapter.reset(0);
     const rt = await runTrace(planned, binding, graph, adapter, inputs, config, 0);
+    executed.push({ planned, rt });
     diagnostics.push(...rt.diagnostics.filter((d) => d.code !== "MODEL_DIVERGENCE" && d.code !== "UNEXPLAINED_CHANGE"));
 
     // 途中で止まったトレースの obligation は未完了として記録する（FR-29）
@@ -690,32 +690,61 @@ export async function runRuntimeChecks(
   results.push(...conformanceResults);
 
   if (wantImpl) {
+    // FLAKY は同一操作列・入力・初期条件で結果が割れた場合に限定する。
+    // 異なるトレースでの成否の混在は別経路の違いであり、プロパティ単位で
+    // 最も優先度の高いグループ判定を採用する。
+    const verdictRank: Record<CheckResult["verdict"], number> = {
+      PASS: 0,
+      INCONCLUSIVE: 1,
+      FLAKY: 2,
+      ERROR: 3,
+      CONFIRMED: 4,
+    };
     for (const [property, acc] of [...oracleAcc.entries()].sort()) {
-      // property 単位で最初のミスマッチを記録し、そのトレースだけを再実行する
-      const firstMismatch = acc.hits.find((h) => h.result.outcome === "MISMATCH");
-      if (firstMismatch && config.replayAttempts > 0) {
-        const replays = await replayViolation(
-          firstMismatch.planned,
-          binding,
-          graph,
-          adapter,
-          inputs,
-          config,
-        );
-        for (const run of replays) {
-          for (const rh of run.oracleHits) {
-            if (rh.rule.property === property) {
-              acc.hits.push({
-                result: rh.result,
-                rt: run,
-                planned: firstMismatch.planned,
-              });
+      // 同一 planned トレース（操作列）ごとにヒットをグループ化する
+      const groups = new Map<
+        PlannedTrace,
+        { planned: PlannedTrace; hits: typeof acc.hits }
+      >();
+      for (const h of acc.hits) {
+        const g = groups.get(h.planned) ?? { planned: h.planned, hits: [] };
+        g.hits.push(h);
+        groups.set(h.planned, g);
+      }
+      const groupList = [...groups.values()].sort((a, b) =>
+        a.planned.eventIds.join(",").localeCompare(b.planned.eventIds.join(",")),
+      );
+
+      // グループ内でミスマッチがあれば、そのトレースだけを再実行する
+      for (const g of groupList) {
+        const gm = g.hits.find((h) => h.result.outcome === "MISMATCH");
+        if (gm && config.replayAttempts > 0) {
+          const replays = await replayViolation(
+            gm.planned, binding, graph, adapter, inputs, config,
+          );
+          for (const run of replays) {
+            for (const rh of run.oracleHits) {
+              if (rh.rule.property === property) {
+                g.hits.push({ result: rh.result, rt: run, planned: gm.planned });
+              }
             }
           }
         }
       }
+
+      // 各グループを決定表で評価し、最も優先度の高い判定を採用する
+      const evaluated = groupList.map((g) => ({
+        g,
+        v: oracleVerdict(g.hits.map((h) => h.result)),
+      }));
+      const decisive = evaluated.reduce((a, b) =>
+        verdictRank[b.v.verdict] > verdictRank[a.v.verdict] ? b : a,
+      );
+      const dg = decisive.g;
+
       // 反例にはミスマッチを出したトレースを使う（なければ最初のヒット）
-      const firstRt = firstMismatch?.rt ?? acc.hits[0].rt;
+      const firstMismatch = dg.hits.find((h) => h.result.outcome === "MISMATCH");
+      const firstRt = firstMismatch?.rt ?? dg.hits[0].rt;
       let cxRt = firstRt;
       let minimized = false;
       if (firstMismatch) {
@@ -735,7 +764,7 @@ export async function runRuntimeChecks(
       results.push(
         oracleCheckResult(
           property,
-          acc.hits.map((h) => ({ result: h.result })),
+          dg.hits.map((h) => ({ result: h.result })),
           cxRt,
           minimized,
         ),
@@ -754,14 +783,49 @@ export async function runRuntimeChecks(
     }
   }
 
+  // カバレッジは計画済みトレースではなく実行結果から集計する。
+  // 数えるのは「観測が記録済み辺の行き先と一致した遷移」と「完了したイベント」のみ。
   const observedStates = new Map<string, AbstractState>();
   const coveredTransitions = new Set<string>();
   const coveredEvents = new Set<string>();
-  for (const t of traces) {
-    for (const s of t.steps) {
-      observedStates.set(stateKey(s.to), s.to);
-      coveredTransitions.add(s.transition);
-      coveredEvents.add(s.event);
+  // 同一 (from,event) に複数の行き先があるのに観測が1分岐しか選ばなかった場合、
+  // 未選択の分岐は個別には検証されていないため notEvaluated に記録する（FR-29）
+  const unexercisedBranches = new Set<string>();
+  for (const { planned, rt } of executed) {
+    for (const o of rt.observations) {
+      observedStates.set(stateKey(o.state), o.state);
+    }
+    let cursorKey = stateKey(planned.initial);
+    for (let i = 0; i < rt.completedSteps; i++) {
+      const step = planned.steps[i];
+      const obs = rt.observations[i + 1];
+      if (!obs) break;
+      coveredEvents.add(step.event);
+      const obsKey = stateKey(obs.state);
+      const fromEdges = graph.edges.filter(
+        (e) => e.event === step.event && stateKey(e.from) === cursorKey,
+      );
+      const matched = fromEdges.filter((e) => stateKey(e.to) === obsKey);
+      for (const e of matched) {
+        coveredTransitions.add(`${e.transition}@${stateKey(e.from)}->${obsKey}`);
+      }
+      const dests = new Set(fromEdges.map((e) => stateKey(e.to)));
+      if (dests.size > 1 && matched.length > 0) {
+        for (const d of dests) {
+          if (d !== obsKey) unexercisedBranches.add(`${step.event}@${cursorKey}->${d}`);
+        }
+      }
+      cursorKey = obsKey;
+    }
+  }
+  if (wantConf) {
+    for (const b of unexercisedBranches) {
+      notEvaluated.push({
+        target: "conformance",
+        property: `branch:${b}`,
+        reason: "INCOMPLETE",
+        cause: "COVERAGE_SHORT",
+      });
     }
   }
 

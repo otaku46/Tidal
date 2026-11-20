@@ -56,6 +56,17 @@ node src/cli.ts examples/disclosure.spec.json --binding examples/disclosure.soli
 | `--minimize n` | 反例の最小化で試す上限回数(既定 8) |
 | `--replay n` | 不一致の再現確認を行う回数 |
 
+### 別サンプル: profile 設定フォーム
+
+`sample/react/index.html` は、未保存変更・保存中・保存失敗・破棄確認・リロードを扱う React のサンプルです。仕様と binding を使って、同じ CLI で検証できます。
+
+```
+node src/cli.ts examples/profile.spec.json --targets model
+node src/cli.ts examples/profile.spec.json --binding examples/profile.react.binding.json --adapter playwright --out report.json
+```
+
+具体値オラクル `saved_value_survives_reload` が、保存した値がリロード後も残ることを個別に確認します。観測状態の不一致とは分けて報告されます。
+
 ## 結果
 
 | 判定 | 意味 |

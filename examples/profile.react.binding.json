@@ -1,0 +1,121 @@
+{
+  "baseUrl": "http://localhost:4173/sample/react/index.html",
+  "schemaVersion": "0.1.0",
+  "events": [
+    {
+      "event": "edit",
+      "actions": [
+        {
+          "kind": "fill",
+          "locator": { "kind": "testId", "value": "draft-input" },
+          "value": "draft-value"
+        }
+      ]
+    },
+    {
+      "event": "save_ok",
+      "actions": [
+        {
+          "kind": "fill",
+          "locator": { "kind": "testId", "value": "draft-input" },
+          "inputId": "profile-name"
+        },
+        {
+          "kind": "click",
+          "locator": { "kind": "testId", "value": "save" }
+        },
+        {
+          "kind": "wait",
+          "condition": { "locator": { "kind": "testId", "value": "status" }, "kind": "text" },
+          "expected": "saved"
+        }
+      ]
+    },
+    {
+      "event": "save_fail",
+      "actions": [
+        {
+          "kind": "fill",
+          "locator": { "kind": "testId", "value": "draft-input" },
+          "value": "fail"
+        },
+        {
+          "kind": "click",
+          "locator": { "kind": "testId", "value": "save" }
+        },
+        {
+          "kind": "wait",
+          "condition": { "locator": { "kind": "testId", "value": "status" }, "kind": "text" },
+          "expected": "error"
+        }
+      ]
+    },
+    {
+      "event": "discard_request",
+      "actions": [
+        { "kind": "click", "locator": { "kind": "testId", "value": "discard" } }
+      ]
+    },
+    {
+      "event": "discard_cancel",
+      "actions": [
+        { "kind": "click", "locator": { "kind": "testId", "value": "discard-cancel" } }
+      ]
+    },
+    {
+      "event": "discard_confirm",
+      "actions": [
+        { "kind": "click", "locator": { "kind": "testId", "value": "discard-confirm" } }
+      ]
+    },
+    {
+      "event": "reload",
+      "actions": [
+        { "kind": "reload" }
+      ]
+    }
+  ],
+  "observe": [
+    {
+      "variable": "status",
+      "source": { "locator": { "kind": "testId", "value": "status" }, "kind": "text" },
+      "cases": [
+        { "observed": "clean", "abstract": "clean" },
+        { "observed": "dirty", "abstract": "dirty" },
+        { "observed": "saved", "abstract": "saved" },
+        { "observed": "error", "abstract": "error" }
+      ]
+    },
+    {
+      "variable": "dialog",
+      "source": {
+        "locator": { "kind": "testId", "value": "dialog-state" },
+        "kind": "attribute",
+        "attribute": "data-state"
+      },
+      "cases": [
+        { "observed": "none", "abstract": "none" },
+        { "observed": "confirm", "abstract": "confirm" }
+      ]
+    }
+  ],
+  "oracles": [
+    {
+      "property": "saved_value_survives_reload",
+      "inputId": "profile-name",
+      "afterEvent": "reload",
+      "actual": { "locator": { "kind": "testId", "value": "draft-input" }, "kind": "value" }
+    }
+  ],
+  "setup": [],
+  "reset": [],
+  "network": [],
+  "selfTest": [
+    { "locator": { "kind": "testId", "value": "status" }, "kind": "text" },
+    {
+      "locator": { "kind": "testId", "value": "dialog-state" },
+      "kind": "attribute",
+      "attribute": "data-state"
+    }
+  ]
+}

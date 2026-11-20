@@ -1,0 +1,170 @@
+{
+  "schemaVersion": "0.1.0",
+  "kind": "tidal.uxSpec",
+  "states": [
+    { "id": "status", "domain": ["clean", "dirty", "saved", "error"] },
+    { "id": "dialog", "domain": ["none", "confirm"] }
+  ],
+  "initialState": {
+    "values": [
+      { "variable": "status", "value": "clean" },
+      { "variable": "dialog", "value": "none" }
+    ]
+  },
+  "events": [
+    { "id": "edit", "kind": "user" },
+    { "id": "save_ok", "kind": "user" },
+    { "id": "save_fail", "kind": "user" },
+    { "id": "discard_request", "kind": "user" },
+    { "id": "discard_cancel", "kind": "user" },
+    { "id": "discard_confirm", "kind": "user" },
+    { "id": "reload", "kind": "browser" }
+  ],
+  "transitions": [
+    {
+      "id": "t_edit",
+      "event": "edit",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "dialog" },
+        { "op": "literal", "value": "none" }
+      ]},
+      "set": { "status": { "op": "literal", "value": "dirty" } }
+    },
+    {
+      "id": "t_save_ok",
+      "event": "save_ok",
+      "when": { "op": "and", "args": [
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "status" },
+          { "op": "literal", "value": "dirty" }
+        ]},
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "dialog" },
+          { "op": "literal", "value": "none" }
+        ]}
+      ]},
+      "set": { "status": { "op": "literal", "value": "saved" } }
+    },
+    {
+      "id": "t_save_fail",
+      "event": "save_fail",
+      "when": { "op": "and", "args": [
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "status" },
+          { "op": "literal", "value": "dirty" }
+        ]},
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "dialog" },
+          { "op": "literal", "value": "none" }
+        ]}
+      ]},
+      "set": { "status": { "op": "literal", "value": "error" } }
+    },
+    {
+      "id": "t_discard_request",
+      "event": "discard_request",
+      "when": { "op": "and", "args": [
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "status" },
+          { "op": "literal", "value": "dirty" }
+        ]},
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "dialog" },
+          { "op": "literal", "value": "none" }
+        ]}
+      ]},
+      "set": { "dialog": { "op": "literal", "value": "confirm" } }
+    },
+    {
+      "id": "t_discard_cancel",
+      "event": "discard_cancel",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "dialog" },
+        { "op": "literal", "value": "confirm" }
+      ]},
+      "set": { "dialog": { "op": "literal", "value": "none" } }
+    },
+    {
+      "id": "t_discard_confirm",
+      "event": "discard_confirm",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "dialog" },
+        { "op": "literal", "value": "confirm" }
+      ]},
+      "set": {
+        "status": { "op": "literal", "value": "clean" },
+        "dialog": { "op": "literal", "value": "none" }
+      }
+    },
+    {
+      "id": "t_reload",
+      "event": "reload",
+      "when": { "op": "literal", "value": true },
+      "set": {
+        "status": { "op": "literal", "value": "clean" },
+        "dialog": { "op": "literal", "value": "none" }
+      }
+    }
+  ],
+  "properties": [
+    {
+      "id": "dirty_can_be_saved",
+      "kind": "canReach",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "status" },
+        { "op": "literal", "value": "dirty" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "status" },
+        { "op": "literal", "value": "saved" }
+      ]}
+    },
+    {
+      "id": "error_can_be_repaired",
+      "kind": "canReach",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "status" },
+        { "op": "literal", "value": "error" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "status" },
+        { "op": "literal", "value": "saved" }
+      ]}
+    },
+    {
+      "id": "discard_confirm_restores_clean",
+      "kind": "canReach",
+      "from": { "op": "and", "args": [
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "status" },
+          { "op": "literal", "value": "dirty" }
+        ]},
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "dialog" },
+          { "op": "literal", "value": "confirm" }
+        ]}
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "status" },
+        { "op": "literal", "value": "clean" }
+      ]}
+    },
+    {
+      "id": "saved_value_survives_reload",
+      "kind": "canReach",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "status" },
+        { "op": "literal", "value": "saved" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "status" },
+        { "op": "literal", "value": "clean" }
+      ]}
+    }
+  ],
+  "analysis": {
+    "maxStates": 100,
+    "maxDepth": 12,
+    "maxTransitions": 10000
+  }
+}

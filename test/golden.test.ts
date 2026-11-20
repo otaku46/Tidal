@@ -12,6 +12,7 @@ import { resolveBinding, type RuntimeConfig } from "../src/binding.ts";
 import { runRuntimeChecks, runTrace } from "../src/runtime.ts";
 import { makeMockAdapter } from "../src/fixtures.ts";
 import { runGoldenCases, type GoldenRunner } from "../src/golden.ts";
+import { DraftApp, MockAdapter } from "../src/adapter.ts";
 import type { UXAdapter } from "../src/adapter.ts";
 import type {
   GoldenCase,
@@ -275,6 +276,23 @@ const cases: GoldenCase[] = [
     },
   },
   {
+    // FLAKY は同一操作列での成否の割れに限定する。
+    // saved からの reload でのみ消失する実装: [edit,reload] 経路では MATCH、
+    // [edit,save,reload] 経路では安定して MISMATCH。経路間の混在は FLAKY ではなく
+    // 安定失敗経路があるため CONFIRMED になる。
+    id: "oracle-path-dependent-not-flaky",
+    spec: specJson,
+    scope: { targets: ["implementation" as Target] },
+    fixture: "loses-saved-on-reload",
+    expected: {
+      overall: "CONFIRMED",
+      exitCode: 1,
+      target: "implementation",
+      evidenceKind: "INDEPENDENT_ORACLE",
+      requiredEvidenceFields: ["expectedValue", "actualValue"],
+    },
+  },
+  {
     // AC-10: モデルの確定違反と runtime の ERROR が同居しても
     // 結果は保持され overall は CONFIRMED（確定証拠が優先）
     id: "confirmed-survives-error",
@@ -308,6 +326,52 @@ test("deadlock / unreachable event are reported in errors", async () => {
     codes.includes("MODEL_UNREACHABLE_EVENT"),
     `MODEL_UNREACHABLE_EVENT missing: ${codes}`,
   );
+});
+
+test("coverage counts only executed and observation-matched steps", async () => {
+  // 途中で観測が失敗するアプリ: 各トレースは最初の1ステップしか完了しない。
+  // 計画上の後続ステップ（save/discard/reload を含む長い経路）が
+  // coverage.events / transitions / states に混入しないことを確認する。
+  const { spec, diagnostics } = validateSpec(specJson);
+  assert.equal(diagnostics.length, 0);
+  assert.ok(spec);
+  const { binding, diagnostics: bd } = resolveBinding(bindingJson, spec!, CONFIG);
+  assert.equal(bd.length, 0);
+  assert.ok(binding);
+  const { graph } = exploreModel(spec!);
+  const { context } = resolveScope(
+    { requested: { targets: ["conformance"] }, declared: [...ALL_TARGETS] },
+    ["model", "conformance", "implementation"],
+  );
+
+  // obs0=read1, step1 後の観測=read2 まで成功、step2 の観測で失敗するアプリ
+  class EarlyStopApp extends DraftApp {
+    reads = 0;
+    override reset() {
+      super.reset();
+      this.reads = 0;
+    }
+    override read(read: Parameters<DraftApp["read"]>[0], attempt: number) {
+      this.reads++;
+      if (this.reads > 2) return undefined;
+      return super.read(read, attempt);
+    }
+  }
+  const adapter = new MockAdapter(new EarlyStopApp("early-stop", "never"), binding);
+  const rt = await runRuntimeChecks(graph, binding!, CONFIG, context, adapter);
+  const conf = rt.coverage.find((c) => c.target === "conformance");
+  assert.ok(conf, "conformance coverage missing");
+  // 最初のステップは edit か reload（save/discard は dirty 経由でしか到達しない）
+  assert.ok(!conf.events.includes("save"), `save must not be covered: ${conf.events}`);
+  assert.ok(!conf.events.includes("discard"), `discard must not be covered: ${conf.events}`);
+  assert.ok(conf.events.includes("edit"), `edit should be covered: ${conf.events}`);
+  // 観測されたのは empty/dirty のみ。saved は未到達
+  const draftValues = conf.states.map((s) =>
+    s.values.find((v) => v.variable === "draft")?.value,
+  );
+  assert.ok(!draftValues.includes("saved"), `saved must not be covered: ${draftValues}`);
+  // 途中停止した obligation は INCOMPLETE として notEvaluated に残る
+  assert.ok(conf.complete === false, "coverage must be incomplete after early stop");
 });
 
 test("env nondeterminism: any recorded branch is accepted", async () => {
