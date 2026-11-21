@@ -1,15 +1,25 @@
 {
-"name": "tidal",
-"version": "0.1.0",
-"description": "Declarative UX specification verifier",
-"type": "module",
-"engines": {
-"node": ">=22.18"
-},
-"scripts": {
-"tidal": "node src/cli.ts",
-"test": "node --test",
-"build:fixtures": "node fixtures/apps/svelte/build.mjs && node fixtures/apps/svelte/build.mjs fixtures/apps/disclosure/svelte",
-"fixtures": "node fixtures/server.mjs"
-}
+  "name": "tidal",
+  "version": "0.1.0",
+  "description": "Declarative UX specification verifier",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "tidal": "node src/cli.ts",
+    "test": "node --test",
+    "build:fixtures": "node fixtures/apps/svelte/build.mjs && node fixtures/apps/svelte/build.mjs fixtures/apps/disclosure/svelte",
+    "fixtures": "node fixtures/server.mjs",
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.65.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "svelte": "^4.2.20",
+    "typescript": "^7.0.2"
+  }
 }

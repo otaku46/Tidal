@@ -58,7 +58,7 @@ impl.lang = "ts"
 intent = "要求されたランタイム対象を実行し、対象別判定・証拠と未評価情報をレポート境界へ渡す。"
 input = ["schema.UxSpec", "schema.ModelGraph", "schema.Binding", "schema.RuntimeConfig", "schema.RunContext"]
 output = ["schema.RunResults"]
-design_notes = "トレース生成、アダプター自己テスト、試行ごとの隔離、同条件再実行を調整する。未実行の義務を PASS とせず、依存する検査を ADAPTER_ERROR または COVERAGE_SHORT で記録する。model を要求しない場合もトレース生成に必要な探索を行い、model の判定は NOT_REQUESTED として扱う。 実装: runRuntimeChecks(graph, binding, config, context, adapter) は Promise<RunResults> を返す。spec 引数は取らず、探索済み ModelGraph を受け取る。カバレッジは計画済みトレースではなく実行結果から集計し、観測が記録済み辺の行き先と一致した遷移と完了したイベントのみを数える。途中停止したステップは数えず、同一 (from,event) で観測が選ばなかった env 分岐は notEvaluated INCOMPLETE/COVERAGE_SHORT に記録する。oracle 判定は同一 planned トレースごとにグループ化し、FLAKY は同一操作列・入力・初期条件での成否の割れに限定する。プロパティの verdict はグループ判定のうち最も優先度の高いものを採用する。"
+design_notes = "トレース生成、アダプター自己テスト、試行ごとの隔離、同条件再実行を調整する。未実行の義務を PASS とせず、依存する検査を ADAPTER_ERROR または COVERAGE_SHORT で記録する。model を要求しない場合もトレース生成に必要な探索を行い、model の判定は NOT_REQUESTED として扱う。 実装: runRuntimeChecks(graph, binding, config, context, adapter) は Promise<RunResults> を返す。spec 引数は取らず、探索済み ModelGraph を受け取る。カバレッジは計画済みトレースではなく実行結果から集計し、観測が記録済み辺の行き先と一致した遷移と完了したイベントのみを数える。途中停止したステップは数えず、attempt0 と replay を含む全試行のランを通して集計する（別試行で観測された env 分岐も観測済みとする）。同一 (from,event) で未観測の任意分岐は missingObligations に branch: 形式で記録し complete=false とするが PASS は妨げない。analysis.requiredTransitions の未観測は notEvaluated INCOMPLETE/COVERAGE_SHORT で PASS を妨げる。oracle 判定は同一 planned トレースごとにグループ化し、FLAKY は同一操作列・入力・初期条件での成否の割れに限定する。プロパティの verdict はグループ判定のうち最も優先度の高いものを採用する。"
 impl.lang = "ts"
 
 [mod.runtime]

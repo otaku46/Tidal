@@ -122,6 +122,7 @@ export async function runCli(argv: string[]): Promise<number> {
   const scope: RunScope = { targets: options.targets };
   const selection: RunSelection = { requested: scope, declared: [...ALL_TARGETS] };
   const { context, notEvaluated: scopeNotEvaluated } = resolveScope(selection, IMPLEMENTED_TARGETS, {
+    analysis: spec?.analysis,
     seed: options.seed,
     environment: {
       adapter: options.adapter ?? "mock",

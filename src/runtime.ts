@@ -57,8 +57,10 @@ function diag(code: string, message: string): Diagnostic {
 // FR-29: coverage.complete の定義をレポートに明記する
 const COVERAGE_DEFINITION =
   "edge-obligation: 各 (from状態, event) 選択点へ最短経路で1トレースを生成し実行する。" +
-  "complete は全 obligation がトレース化され最後のイベントまで実行完了したことを意味し、" +
-  "同一選択点への異なる経路や env 全分岐の個別実行は保証しない。";
+  "complete は全 obligation がトレース化され最終イベントまで実行完了し、かつ記録された全分岐が" +
+  "いずれかの試行で観測されたことを意味する。同一選択点への異なる経路は保証しない。" +
+  "analysis.requiredTransitions の未観測は notEvaluated INCOMPLETE となり PASS を妨げ、" +
+  "任意分岐の未観測は missingObligations に branch: 形式で記録される。";
 
 // FR-26/Q8: 反例トレース最小化の既定試行上限
 const DEFAULT_MINIMIZE_ATTEMPTS = 8;
@@ -573,8 +575,9 @@ export async function runRuntimeChecks(
   const inputs = makeInputs(binding, config.seed);
   const conformanceResults: CheckResult[] = [];
   const incompleteObligations = new Set<string>();
-  // カバレッジは計画ではなく実行結果から集計するため、attempt0 のランを保持する
-  const executed: { planned: PlannedTrace; rt: RuntimeTraceResult }[] = [];
+  // カバレッジは計画ではなく実行結果から集計する。attempt0 に加え、
+  // replay など全試行のランを集計対象に含める（別試行で観測された分岐も数える）
+  const executed: RuntimeTraceResult[] = [];
   // property -> attempt0 のヒット（結果・トレース・計画を保持）
   const oracleAcc = new Map<
     string,
@@ -584,7 +587,7 @@ export async function runRuntimeChecks(
   for (const [ti, planned] of traces.entries()) {
     await adapter.reset(0);
     const rt = await runTrace(planned, binding, graph, adapter, inputs, config, 0);
-    executed.push({ planned, rt });
+    executed.push(rt);
     diagnostics.push(...rt.diagnostics.filter((d) => d.code !== "MODEL_DIVERGENCE" && d.code !== "UNEXPLAINED_CHANGE"));
 
     // 途中で止まったトレースの obligation は未完了として記録する（FR-29）
@@ -620,6 +623,7 @@ export async function runRuntimeChecks(
           const runs = await replayViolation(
             planned, binding, graph, adapter, inputs, config,
           );
+          executed.push(...runs);
           for (const [i, run] of runs.entries()) {
             const aerr = run.diagnostics.some((d) => d.code === "ADAPTER_ERROR");
             const repro = run.diagnostics.some(
@@ -722,6 +726,7 @@ export async function runRuntimeChecks(
           const replays = await replayViolation(
             gm.planned, binding, graph, adapter, inputs, config,
           );
+          executed.push(...replays);
           for (const run of replays) {
             for (const rh of run.oracleHits) {
               if (rh.rule.property === property) {
@@ -785,19 +790,24 @@ export async function runRuntimeChecks(
 
   // カバレッジは計画済みトレースではなく実行結果から集計する。
   // 数えるのは「観測が記録済み辺の行き先と一致した遷移」と「完了したイベント」のみ。
+  // 全試行（attempt0 + replay）のランを通して集計し、別試行で観測された
+  // env 分岐も「観測済み」として扱う。
   const observedStates = new Map<string, AbstractState>();
   const coveredTransitions = new Set<string>();
+  const coveredTransitionIds = new Set<string>();
   const coveredEvents = new Set<string>();
-  // 同一 (from,event) に複数の行き先があるのに観測が1分岐しか選ばなかった場合、
-  // 未選択の分岐は個別には検証されていないため notEvaluated に記録する（FR-29）
-  const unexercisedBranches = new Set<string>();
-  for (const { planned, rt } of executed) {
+  // (event@fromKey) ごとの分岐観測を全試行でマージする
+  const branchPoints = new Map<
+    string,
+    { dests: Set<string>; observed: Set<string>; exercised: boolean }
+  >();
+  for (const rt of executed) {
     for (const o of rt.observations) {
       observedStates.set(stateKey(o.state), o.state);
     }
-    let cursorKey = stateKey(planned.initial);
+    let cursorKey = stateKey(rt.trial.trace.initial);
     for (let i = 0; i < rt.completedSteps; i++) {
-      const step = planned.steps[i];
+      const step = rt.expectedSteps[i];
       const obs = rt.observations[i + 1];
       if (!obs) break;
       coveredEvents.add(step.event);
@@ -808,24 +818,44 @@ export async function runRuntimeChecks(
       const matched = fromEdges.filter((e) => stateKey(e.to) === obsKey);
       for (const e of matched) {
         coveredTransitions.add(`${e.transition}@${stateKey(e.from)}->${obsKey}`);
+        coveredTransitionIds.add(e.transition);
       }
-      const dests = new Set(fromEdges.map((e) => stateKey(e.to)));
-      if (dests.size > 1 && matched.length > 0) {
-        for (const d of dests) {
-          if (d !== obsKey) unexercisedBranches.add(`${step.event}@${cursorKey}->${d}`);
-        }
+      const bpKey = `${step.event}@${cursorKey}`;
+      const bp = branchPoints.get(bpKey) ?? {
+        dests: new Set<string>(),
+        observed: new Set<string>(),
+        exercised: false,
+      };
+      for (const e of fromEdges) bp.dests.add(stateKey(e.to));
+      if (matched.length > 0) {
+        bp.exercised = true;
+        bp.observed.add(obsKey);
       }
+      branchPoints.set(bpKey, bp);
       cursorKey = obsKey;
     }
   }
+  // 同一 (from,event) に複数の行き先があるのに全試行を通しても一部の分岐が
+  // 未観測なら、個別には検証されていないため notEvaluated に記録する（FR-29）
+  const unexercisedBranches = new Set<string>();
+  for (const [k, bp] of branchPoints) {
+    if (!bp.exercised || bp.observed.size >= bp.dests.size) continue;
+    for (const d of bp.dests) {
+      if (!bp.observed.has(d)) unexercisedBranches.add(`${k}->${d}`);
+    }
+  }
+  // 任意分岐の未観測は missingObligations（complete=false、PASS は妨げない）に記録し、
+  // analysis.requiredTransitions の未観測のみ notEvaluated INCOMPLETE で PASS を妨げる
   if (wantConf) {
-    for (const b of unexercisedBranches) {
-      notEvaluated.push({
-        target: "conformance",
-        property: `branch:${b}`,
-        reason: "INCOMPLETE",
-        cause: "COVERAGE_SHORT",
-      });
+    for (const tid of context.analysis?.requiredTransitions ?? []) {
+      if (!coveredTransitionIds.has(tid)) {
+        notEvaluated.push({
+          target: "conformance",
+          property: `required:${tid}`,
+          reason: "INCOMPLETE",
+          cause: "COVERAGE_SHORT",
+        });
+      }
     }
   }
 
@@ -833,6 +863,7 @@ export async function runRuntimeChecks(
   const confMissing = [
     ...confObligations,
     ...[...incompleteObligations].filter((o) => !o.startsWith("oracle:")),
+    ...[...unexercisedBranches].map((b) => `branch:${b}`),
   ];
   if (wantConf) {
     coverage.push({

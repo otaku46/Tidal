@@ -56,7 +56,7 @@ fields = { id = "string", kind = "neverTransition|canReach|escapable", from = "s
 [schema.AnalysisLimits]
 kind = "node"
 role = "config"
-fields = { maxStates = "int", maxDepth = "int", maxTransitions = "int" }
+fields = { maxStates = "int", maxDepth = "int", maxTransitions = "int", requiredTransitions = "string[]?" }
 
 [schema.UxSpec]
 kind = "node"

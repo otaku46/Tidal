@@ -374,6 +374,126 @@ test("coverage counts only executed and observation-matched steps", async () => 
   assert.ok(conf.complete === false, "coverage must be incomplete after early stop");
 });
 
+test("requiredTransitions: unobserved required branch blocks PASS", async () => {
+  // env で a/b に分岐する仕様。t_b を必須遷移に指定。
+  // 常に "a" を観測するアプリでは t_b が未観測 → notEvaluated INCOMPLETE →
+  // overall は INCONCLUSIVE（PASS にならない）。
+  const mkSpec = (required?: string[]) => ({
+    schemaVersion: "0.1.0",
+    kind: "tidal.uxSpec",
+    states: [{ id: "flag", domain: ["a", "b"] }],
+    initialState: { values: [{ variable: "flag", value: "a" }] },
+    events: [{ id: "flip", kind: "env" }],
+    transitions: [
+      { id: "t_a", event: "flip", when: { op: "literal", value: true },
+        set: { flag: { op: "literal", value: "a" } } },
+      { id: "t_b", event: "flip", when: { op: "literal", value: true },
+        set: { flag: { op: "literal", value: "b" } } },
+    ],
+    properties: [],
+    analysis: {
+      maxStates: 10, maxDepth: 5, maxTransitions: 100,
+      ...(required ? { requiredTransitions: required } : {}),
+    },
+  });
+  const binding: Parameters<typeof runTrace>[1] = {
+    schemaVersion: "0.1.0",
+    baseUrl: "http://localhost:3000",
+    events: [{ event: "flip", actions: [] }],
+    observe: [],
+    oracles: [],
+    setup: [],
+    reset: [],
+    network: [],
+    selfTest: [],
+  };
+  const run = async (observedValue: string, required?: string[]) => {
+    const { spec, diagnostics } = validateSpec(mkSpec(required));
+    assert.equal(diagnostics.length, 0);
+    const { graph } = exploreModel(spec!);
+    const { context, notEvaluated } = resolveScope(
+      { requested: { targets: ["conformance"] }, declared: [...ALL_TARGETS] },
+      ["model", "conformance", "implementation"],
+      { analysis: spec!.analysis },
+    );
+    const stub: UXAdapter = {
+      setup: async () => [],
+      reset: async () => [],
+      execute: async () => [],
+      act: async () => [],
+      observe: async () => ({
+        observation: {
+          state: { values: [{ variable: "flag", value: observedValue }] },
+          provenance: "runner" as const,
+        },
+        diagnostics: [],
+      }),
+      read: async () => ({ value: observedValue, diagnostics: [] }),
+      selfTest: async () => [],
+      teardown: async () => [],
+    };
+    const rt = await runRuntimeChecks(graph, binding, CONFIG, context, stub);
+    return { rt, scopeNE: notEvaluated };
+  };
+
+  // "a" のみ観測 → t_b 未観測 → required:t_b が INCOMPLETE
+  const onlyA = await run("a", ["t_b"]);
+  const req = onlyA.rt.notEvaluated.find((n) => n.property === "required:t_b");
+  assert.ok(req, `required:t_b must be notEvaluated: ${JSON.stringify(onlyA.rt.notEvaluated)}`);
+  assert.equal(req.reason, "INCOMPLETE");
+  // 任意分岐の未観測は missingObligations に記録される（PASS は妨げない）
+  const confCov = onlyA.rt.coverage.find((c) => c.target === "conformance");
+  assert.ok(
+    confCov?.missingObligations.some((m) => m.startsWith("branch:")),
+    `unexercised branch must appear in missingObligations: ${JSON.stringify(confCov?.missingObligations)}`,
+  );
+  assert.equal(confCov?.complete, false);
+
+  // attempt0 は未記録の "c"（divergence → replay 発火）、attempt>=1 は "b" を観測。
+  // replay 試行で t_b が観測されるため、required:t_b は全試行集計で充足される。
+  const diverge = await (async () => {
+    const { spec, diagnostics } = validateSpec(mkSpec(["t_b"]));
+    assert.equal(diagnostics.length, 0);
+    const { graph } = exploreModel(spec!);
+    const { context } = resolveScope(
+      { requested: { targets: ["conformance"] }, declared: [...ALL_TARGETS] },
+      ["model", "conformance", "implementation"],
+      { analysis: spec!.analysis },
+    );
+    let attempt = 0;
+    const value = () => (attempt === 0 ? "c" : "b");
+    const stub: UXAdapter = {
+      setup: async () => [],
+      reset: async (a = 0) => {
+        attempt = a;
+        return [];
+      },
+      execute: async () => [],
+      act: async () => [],
+      observe: async () => ({
+        observation: {
+          state: { values: [{ variable: "flag", value: value() }] },
+          provenance: "runner" as const,
+        },
+        diagnostics: [],
+      }),
+      read: async () => ({ value: value(), diagnostics: [] }),
+      selfTest: async () => [],
+      teardown: async () => [],
+    };
+    return runRuntimeChecks(graph, binding, CONFIG, context, stub);
+  })();
+  assert.ok(
+    !diverge.notEvaluated.some((n) => n.property === "required:t_b"),
+    `required:t_b must be satisfied via replay observation: ${JSON.stringify(diverge.notEvaluated)}`,
+  );
+  const confCovB = diverge.coverage.find((c) => c.target === "conformance");
+  assert.ok(
+    confCovB?.transitions.some((t) => t.startsWith("t_b@")),
+    `t_b must be covered from replay runs: ${JSON.stringify(confCovB?.transitions)}`,
+  );
+});
+
 test("env nondeterminism: any recorded branch is accepted", async () => {
   const envSpecJson = {
     schemaVersion: "0.1.0",

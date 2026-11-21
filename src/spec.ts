@@ -377,11 +377,39 @@ export function validateSpec(input: unknown): { spec?: UxSpec; diagnostics: Diag
     if (!okInt(maxTransitions) || (maxTransitions as number) < 0) {
       diagnostics.push(diag("SPEC_ANALYSIS", "maxTransitions は0以上の安全整数である必要があります"));
     }
-    if (diagnostics.length === 0 || okInt(maxStates) && okInt(maxDepth) && okInt(maxTransitions)) {
+    // 必須遷移: ランタイムで観測一致が必須の遷移 ID（任意の env 分岐等を必須化できる）
+    let requiredTransitions: string[] | undefined;
+    if (input.analysis.requiredTransitions !== undefined) {
+      const rt = input.analysis.requiredTransitions;
+      if (
+        !Array.isArray(rt) ||
+        rt.some((v) => typeof v !== "string" || v.length === 0)
+      ) {
+        diagnostics.push(
+          diag("SPEC_ANALYSIS", "requiredTransitions は文字列 ID の配列である必要があります"),
+        );
+      } else {
+        const ids = new Set(transitions.map((t) => t.id));
+        for (const id of rt as string[]) {
+          if (!ids.has(id)) {
+            diagnostics.push(
+              diag("SPEC_ANALYSIS", `requiredTransitions に未定義の遷移: ${id}`),
+            );
+          }
+        }
+        requiredTransitions = [...new Set(rt as string[])];
+      }
+    }
+    if (
+      (diagnostics.length === 0 ||
+        (okInt(maxStates) && okInt(maxDepth) && okInt(maxTransitions))) &&
+      !diagnostics.some((d) => d.code === "SPEC_ANALYSIS")
+    ) {
       analysis = {
         maxStates: maxStates as number,
         maxDepth: maxDepth as number,
         maxTransitions: maxTransitions as number,
+        ...(requiredTransitions ? { requiredTransitions } : {}),
       };
     }
   }

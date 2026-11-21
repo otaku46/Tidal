@@ -67,6 +67,9 @@ export interface AnalysisLimits {
   maxStates: number;
   maxDepth: number;
   maxTransitions: number;
+  // ランタイムで必ず観測一致しなければならない遷移 ID。
+  // 未観測の必須遷移は notEvaluated INCOMPLETE となり PASS を妨げる。
+  requiredTransitions?: string[];
 }
 
 export interface UxSpec {

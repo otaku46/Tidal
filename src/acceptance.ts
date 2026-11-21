@@ -58,11 +58,11 @@ export async function verifyFrameworkFixtures(
 
   const scope: RunScope = {};
   const selection: RunSelection = { requested: scope, declared: [...ALL_TARGETS] };
-  const { context, notEvaluated } = resolveScope(selection, [
-    "model",
-    "conformance",
-    "implementation",
-  ]);
+  const { context, notEvaluated } = resolveScope(
+    selection,
+    ["model", "conformance", "implementation"],
+    { analysis: validated.analysis, seed: "acceptance" },
+  );
   const run: RunResults = {
     context,
     results: [],
