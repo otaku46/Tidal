@@ -1,0 +1,167 @@
+{
+  "schemaVersion": "0.1.0",
+  "baseUrl": "http://localhost:4173/fixtures/apps/conflict/index.html",
+  "events": [
+    {
+      "event": "send_a",
+      "networkFixture": "hold-save",
+      "actions": [
+        {
+          "kind": "fill",
+          "locator": { "kind": "testId", "value": "doc-body" },
+          "inputId": "conflict-body-a"
+        },
+        {
+          "kind": "click",
+          "locator": { "kind": "testId", "value": "save-button" }
+        }
+      ]
+    },
+    {
+      "event": "send_b",
+      "networkFixture": "hold-save",
+      "actions": [
+        {
+          "kind": "fill",
+          "locator": { "kind": "testId", "value": "doc-body" },
+          "inputId": "conflict-body-b"
+        },
+        {
+          "kind": "click",
+          "locator": { "kind": "testId", "value": "save-button" }
+        },
+        {
+          "kind": "expectHeld",
+          "fixture": "hold-save",
+          "expected": 2
+        }
+      ]
+    },
+    {
+      "event": "release_b",
+      "actions": [
+        {
+          "kind": "expectHeld",
+          "fixture": "hold-save",
+          "expected": 2
+        },
+        { "kind": "release", "fixture": "hold-save", "index": -1 },
+        {
+          "kind": "wait",
+          "condition": {
+            "locator": { "kind": "testId", "value": "pending-tags" },
+            "kind": "text"
+          },
+          "expected": "a"
+        }
+      ]
+    },
+    {
+      "event": "release_a",
+      "actions": [
+        {
+          "kind": "expectHeld",
+          "fixture": "hold-save",
+          "expected": 1
+        },
+        { "kind": "release", "fixture": "hold-save", "index": 0 },
+        {
+          "kind": "wait",
+          "condition": {
+            "locator": { "kind": "testId", "value": "pending-tags" },
+            "kind": "text"
+          },
+          "expected": "none"
+        }
+      ]
+    }
+  ],
+  "observe": [
+    {
+      "variable": "pending",
+      "source": {
+        "locator": { "kind": "testId", "value": "pending-tags" },
+        "kind": "text"
+      },
+      "cases": [
+        { "observed": "none", "abstract": "none" },
+        { "observed": "a", "abstract": "a" },
+        { "observed": "b", "abstract": "b" },
+        { "observed": "a,b", "abstract": "ab" }
+      ]
+    },
+    {
+      "variable": "latest",
+      "source": {
+        "locator": { "kind": "testId", "value": "sent-tags" },
+        "kind": "text"
+      },
+      "cases": [
+        { "observed": "none", "abstract": "none" },
+        { "observed": "a", "abstract": "a" },
+        { "observed": "b", "abstract": "b" }
+      ]
+    },
+    {
+      "variable": "view",
+      "source": {
+        "locator": { "kind": "testId", "value": "view-tags" },
+        "kind": "text"
+      },
+      "cases": [
+        { "observed": "empty", "abstract": "empty" },
+        { "observed": "a", "abstract": "a" },
+        { "observed": "b", "abstract": "b" }
+      ]
+    }
+  ],
+  "oracles": [
+    {
+      "property": "newer_value_applied_before_stale_release",
+      "inputId": "conflict-body-b",
+      "afterEvent": "release_b",
+      "actual": {
+        "locator": { "kind": "testId", "value": "doc-body" },
+        "kind": "value"
+      }
+    },
+    {
+      "property": "no_stale_rollback",
+      "inputId": "conflict-body-b",
+      "afterEvent": "release_a",
+      "actual": {
+        "locator": { "kind": "testId", "value": "doc-body" },
+        "kind": "value"
+      }
+    }
+  ],
+  "setup": [],
+  "reset": [],
+  "network": [
+    {
+      "id": "hold-save",
+      "path": "/api/docs*",
+      "status": 200,
+      "mode": "hold",
+      "matchBody": "conflict-body-"
+    }
+  ],
+  "selfTest": [
+    {
+      "locator": { "kind": "testId", "value": "pending-tags" },
+      "kind": "text"
+    },
+    {
+      "locator": { "kind": "testId", "value": "sent-tags" },
+      "kind": "text"
+    },
+    {
+      "locator": { "kind": "testId", "value": "doc-body" },
+      "kind": "value"
+    },
+    {
+      "locator": { "kind": "testId", "value": "view-tags" },
+      "kind": "text"
+    }
+  ]
+}

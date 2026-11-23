@@ -56,24 +56,6 @@ export function findPath(
   return null;
 }
 
-// All states reachable from `fromKey` following edges. Includes `fromKey` itself.
-function reachableFrom(graph: ModelGraph, fromKey: string): Set<string> {
-  const out = new Set([fromKey]);
-  const queue = [fromKey];
-  while (queue.length) {
-    const k = queue.shift()!;
-    for (const e of graph.edges) {
-      if (stateKey(e.from) !== k) continue;
-      const tk = stateKey(e.to);
-      if (!out.has(tk)) {
-        out.add(tk);
-        queue.push(tk);
-      }
-    }
-  }
-  return out;
-}
-
 function evidenceFor(
   id: string,
   counterexample: Counterexample,
@@ -98,6 +80,21 @@ function vacuousOrLimit(
   };
 }
 
+// 許可辺で fromKey から到達できる範囲が閉じているか。
+// 閉じていれば（範囲内に未展開状態がなければ）その部分グラフ上の
+// 到達不能は確定できる。未展開状態が残る場合は真偽未確定。
+function regionClosed(
+  graph: ModelGraph,
+  unexpandedKeys: Set<string>,
+  fromKey: string,
+  allowedEventIds: Set<string> | null,
+): boolean {
+  for (const k of reachableFromKinds(graph, fromKey, allowedEventIds)) {
+    if (unexpandedKeys.has(k)) return false;
+  }
+  return true;
+}
+
 export function checkProperties(
   spec: UxSpec,
   graph: ModelGraph,
@@ -109,6 +106,7 @@ export function checkProperties(
 
   const stateList = graph.states;
   const fromCache = new Map<string, AbstractState[]>();
+  const unexpandedKeys = new Set(graph.unexpanded.map((s) => stateKey(s)));
 
   for (const prop of spec.properties) {
     let fromStates = fromCache.get(prop.id);
@@ -159,7 +157,7 @@ export function checkProperties(
             observations: [],
             minimized: false,
           };
-          finish("CONFIRMED", [], [
+          finish("CONFIRMED", graph.complete ? [] : ["EXPLORATION_LIMIT"], [
             evidenceFor(`${prop.id}:counterexample`, counterexample, ["model"]),
           ]);
         } else if (!graph.complete) {
@@ -173,30 +171,32 @@ export function checkProperties(
 
       case "canReach": {
         // every from-state must reach some to-state (length-0 allowed)
+        // FR-10: 探索打ち切り時、未探索領域に新たな起点があり得るため
+        // 全起点が到達可能でも PASS にしない。到達不能の起点でも
+        // 許可辺で到達できる範囲が閉じていれば反例は確定できる。
         let undetermined = false;
         let counterFrom: AbstractState | null = null;
         for (const fs of fromStates) {
           const fk = stateKey(fs);
           if (satisfies(prop.to!, fs)) continue; // length-0 path
-          const reach = reachableFrom(graph, fk);
+          const reach = reachableFromKinds(graph, fk, null);
           const ok = [...reach].some((k) => {
             const st = stateList.find((s) => stateKey(s) === k);
             return st !== undefined && satisfies(prop.to!, st);
           });
           if (ok) continue;
-          if (!graph.complete) {
-            undetermined = true;
+          if (regionClosed(graph, unexpandedKeys, fk, null)) {
+            counterFrom = fs;
             break;
           }
-          counterFrom = fs;
-          break;
+          undetermined = true;
         }
         if (counterFrom) {
           const fk = stateKey(counterFrom);
           const path = findPath(graph, fk);
-          const explored = [...reachableFrom(graph, fk)].map((k) =>
-            stateList.find((s) => stateKey(s) === k)!,
-          );
+          const explored = [...reachableFromKinds(graph, fk, null)]
+            .map((k) => stateList.find((s) => stateKey(s) === k))
+            .filter((s): s is AbstractState => s !== undefined);
           const counterexample: Counterexample = {
             initial: graph.initial,
             events: path?.events ?? [],
@@ -206,10 +206,10 @@ export function checkProperties(
             exploredFromWitness: explored,
             minimized: false,
           };
-          finish("CONFIRMED", [], [
+          finish("CONFIRMED", graph.complete ? [] : ["EXPLORATION_LIMIT"], [
             evidenceFor(`${prop.id}:unreachable`, counterexample, ["model"]),
           ]);
-        } else if (undetermined) {
+        } else if (undetermined || !graph.complete) {
           finish("INCONCLUSIVE", ["EXPLORATION_LIMIT"]);
         } else {
           finish("PASS", []);
@@ -234,12 +234,11 @@ export function checkProperties(
             return st !== undefined && !satisfies(prop.from, st);
           });
           if (escaped) continue;
-          if (!graph.complete) {
-            undetermined = true;
+          if (regionClosed(graph, unexpandedKeys, fk, allowedEventIds)) {
+            counterFrom = fs;
             break;
           }
-          counterFrom = fs;
-          break;
+          undetermined = true;
         }
         if (counterFrom) {
           const fk = stateKey(counterFrom);
@@ -252,10 +251,10 @@ export function checkProperties(
             unreachableFrom: counterFrom,
             minimized: false,
           };
-          finish("CONFIRMED", [], [
+          finish("CONFIRMED", graph.complete ? [] : ["EXPLORATION_LIMIT"], [
             evidenceFor(`${prop.id}:inescapable`, counterexample, ["model"]),
           ]);
-        } else if (undetermined) {
+        } else if (undetermined || !graph.complete) {
           finish("INCONCLUSIVE", ["EXPLORATION_LIMIT"]);
         } else {
           finish("PASS", []);

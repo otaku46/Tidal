@@ -34,6 +34,17 @@ const bindingJson = JSON.parse(
   readFileSync(join(root, "examples/draft-retention.binding.json"), "utf8"),
 );
 
+// plan A: goal → hidden → trap。全状態から goal に戻れることを要求する
+// canReach 仕様。trap/side2 は行き止まり。
+const goalSpecJson = JSON.parse(
+  readFileSync(join(root, "examples/return-to-goal.spec.json"), "utf8"),
+);
+const withLimits = (maxStates: number, maxDepth: number, maxTransitions: number) => {
+  const s = JSON.parse(JSON.stringify(goalSpecJson));
+  s.analysis = { maxStates, maxDepth, maxTransitions };
+  return s;
+};
+
 // variant: reload clears the abstract draft (model violation of neverTransition)
 const badSpecJson = JSON.parse(JSON.stringify(specJson));
 for (const t of badSpecJson.transitions) {
@@ -302,6 +313,74 @@ const cases: GoldenCase[] = [
     expected: {
       overall: "CONFIRMED",
       exitCode: 1,
+      evidenceKind: "MODEL_COUNTEREXAMPLE",
+      requiredEvidenceFields: ["events", "modelSteps"],
+    },
+  },
+  {
+    // plan A / FR-10: maxStates=1 では goal のみ発見される。
+    // 発見済み起点はすべて goal に戻れるが、未探索領域に新たな起点が
+    // あり得るため PASS ではなく INCONCLUSIVE / EXPLORATION_LIMIT。
+    id: "return-to-goal-maxstates1-inconclusive",
+    spec: withLimits(1, 1, 0),
+    scope: { targets: ["model"] },
+    expected: {
+      overall: "INCONCLUSIVE",
+      exitCode: 2,
+      cause: "EXPLORATION_LIMIT",
+      requiredEvidenceFields: [],
+    },
+  },
+  {
+    // 深さ上限でも同じ判定になること（上限種別の一貫性）
+    id: "return-to-goal-maxdepth0-inconclusive",
+    spec: withLimits(10, 0, 100),
+    scope: { targets: ["model"] },
+    expected: {
+      overall: "INCONCLUSIVE",
+      exitCode: 2,
+      cause: "EXPLORATION_LIMIT",
+      requiredEvidenceFields: [],
+    },
+  },
+  {
+    // 遷移数上限でも同じ判定になること
+    id: "return-to-goal-maxtransitions0-inconclusive",
+    spec: withLimits(10, 10, 0),
+    scope: { targets: ["model"] },
+    expected: {
+      overall: "INCONCLUSIVE",
+      exitCode: 2,
+      cause: "EXPLORATION_LIMIT",
+      requiredEvidenceFields: [],
+    },
+  },
+  {
+    // 完全探索: trap（と side2）から goal へ戻れない → CONFIRMED。
+    // 反例には戻れない起点 trap への操作列 [advance, advance] が残る。
+    id: "return-to-goal-confirmed",
+    spec: withLimits(10, 10, 100),
+    scope: { targets: ["model"] },
+    expected: {
+      overall: "CONFIRMED",
+      exitCode: 1,
+      target: "model",
+      evidenceKind: "MODEL_COUNTEREXAMPLE",
+      requiredEvidenceFields: ["events", "modelSteps"],
+    },
+  },
+  {
+    // 部分探索でも反例を確定できる: maxStates=4 では trap の到達範囲が
+    // 閉じている（side2 のみ未展開）ため CONFIRMED を維持しつつ、
+    // EXPLORATION_LIMIT の cause と診断を両方残す。
+    id: "return-to-goal-partial-confirmed",
+    spec: withLimits(4, 10, 100),
+    scope: { targets: ["model"] },
+    expected: {
+      overall: "CONFIRMED",
+      exitCode: 1,
+      target: "model",
+      cause: "EXPLORATION_LIMIT",
       evidenceKind: "MODEL_COUNTEREXAMPLE",
       requiredEvidenceFields: ["events", "modelSteps"],
     },

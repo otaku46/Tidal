@@ -1,0 +1,4 @@
+{
+  "extends": "./playground.binding.json",
+  "baseUrl": "http://localhost:4173/fixtures/apps/playground/index.html"
+}

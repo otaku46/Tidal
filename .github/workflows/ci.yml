@@ -36,10 +36,31 @@ jobs:
             --fixture retains \
             --out tidal-report.json || true
 
-      - name: Upload tidal report
+      - name: Generate save-conflict reports (naive + fixed)
+        if: always()
+        run: |
+          node fixtures/server.mjs & echo $! > /tmp/fixture-server.pid
+          for i in $(seq 1 50); do
+            curl -sf http://localhost:4173/fixtures/apps/conflict/index.html > /dev/null && break
+            sleep 0.1
+          done
+          node src/cli.ts examples/save-conflict.spec.json \
+            --binding examples/save-conflict.naive.binding.json \
+            --adapter playwright \
+            --out tidal-report-conflict-naive.json || true
+          node src/cli.ts examples/save-conflict.spec.json \
+            --binding examples/save-conflict.fixed.binding.json \
+            --adapter playwright \
+            --out tidal-report-conflict-fixed.json || true
+          kill $(cat /tmp/fixture-server.pid) || true
+
+      - name: Upload tidal reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tidal-report
-          path: tidal-report.json
+          name: tidal-reports
+          path: |
+            tidal-report.json
+            tidal-report-conflict-naive.json
+            tidal-report-conflict-fixed.json
           if-no-files-found: ignore

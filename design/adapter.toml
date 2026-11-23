@@ -15,7 +15,7 @@ fields = { locator = "schema.Locator", kind = "attribute|text|value", attribute 
 
 [schema.Action]
 kind = "node"
-fields = { kind = "navigate|click|fill|reload|back|wait", locator = "schema.Locator?", path = "string?", value = "string?", inputId = "string?", condition = "schema.Read?", expected = "schema.Scalar?" }
+fields = { kind = "navigate|click|fill|reload|back|wait|release|expectHeld", locator = "schema.Locator?", path = "string?", value = "string?", inputId = "string?", condition = "schema.Read?", expected = "schema.Scalar?", fixture = "string?", index = "int?" }
 
 [schema.ObservationRule]
 kind = "node"
@@ -39,7 +39,7 @@ fields = { property = "string", inputId = "string", afterEvent = "string", actua
 
 [schema.NetworkFixture]
 kind = "node"
-fields = { id = "string", path = "string", status = "int", body = "string?" }
+fields = { id = "string", path = "string", status = "int", body = "string?", mode = "fulfill|hold?", matchBody = "string?" }
 
 [schema.Binding]
 kind = "node"
@@ -54,7 +54,7 @@ fields = { allowedOrigins = "string[]", timeoutMs = "int", replayAttempts = "int
 intent = "binding.json の構造、イベント ID、観測先、値域、許可された操作先を検証する。"
 input = ["schema.JsonValue", "schema.UxSpec", "schema.RuntimeConfig"]
 output = ["schema.Binding", "schema.Diagnostic"]
-design_notes = "ローカルまたは明示許可されたテスト環境の origin に操作を制限する。ナビゲーションやリダイレクトを含めて許可範囲を確認し、任意コードを Binding に含めない。 実装: resolveBinding(input: unknown, spec, config) は { binding?, diagnostics } を返す。binding ファイルの読み込みは loadBindingJson(path) が担い、\"extends\" による親ファイル継承（トップレベル浅いマージ、配列は子が置換、相対パス、循環はエラー）をサポートする。フレームワーク共通の binding を1ファイルに集約し、接続先 baseUrl のみを子ファイルで差し替える用途を想定する。"
+design_notes = "ローカルまたは明示許可されたテスト環境の origin に操作を制限する。ナビゲーションやリダイレクトを含めて許可範囲を確認し、任意コードを Binding に含めない。 network fixture の mode=\"hold\" は matchBody を必須とし、イベントの networkFixture で明示有効化された場合のみ適用する。hold 対象は route.fetch() で実サーバーへ通し応答のみを保留し、release(index: 0=最古/負数=末尾から)で route.fulfill、expectHeld(expected)で保留数の同期を行う。要求を捕捉できない・順序を作れない試行は ADAPTER_ERROR として報告する。 実装: resolveBinding(input: unknown, spec, config) は { binding?, diagnostics } を返す。binding ファイルの読み込みは loadBindingJson(path) が担い、\"extends\" による親ファイル継承（トップレベル浅いマージ、配列は子が置換、相対パス、循環はエラー）をサポートする。フレームワーク共通の binding を1ファイルに集約し、接続先 baseUrl のみを子ファイルで差し替える用途を想定する。"
 impl.lang = "ts"
 
 [func.setupAdapter]

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "0.1.0",
+  "kind": "tidal.uxSpec",
+  "states": [
+    { "id": "loc", "domain": ["goal", "hidden", "trap", "side", "side2"] }
+  ],
+  "initialState": {
+    "values": [{ "variable": "loc", "value": "goal" }]
+  },
+  "events": [
+    { "id": "advance", "kind": "user" },
+    { "id": "back", "kind": "user" },
+    { "id": "branch", "kind": "user" }
+  ],
+  "transitions": [
+    {
+      "id": "t_adv_goal",
+      "event": "advance",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "loc" },
+        { "op": "literal", "value": "goal" }
+      ]},
+      "set": { "loc": { "op": "literal", "value": "hidden" } }
+    },
+    {
+      "id": "t_branch_goal",
+      "event": "branch",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "loc" },
+        { "op": "literal", "value": "goal" }
+      ]},
+      "set": { "loc": { "op": "literal", "value": "side" } }
+    },
+    {
+      "id": "t_adv_hidden",
+      "event": "advance",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "loc" },
+        { "op": "literal", "value": "hidden" }
+      ]},
+      "set": { "loc": { "op": "literal", "value": "trap" } }
+    },
+    {
+      "id": "t_back_hidden",
+      "event": "back",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "loc" },
+        { "op": "literal", "value": "hidden" }
+      ]},
+      "set": { "loc": { "op": "literal", "value": "goal" } }
+    },
+    {
+      "id": "t_branch_side",
+      "event": "branch",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "loc" },
+        { "op": "literal", "value": "side" }
+      ]},
+      "set": { "loc": { "op": "literal", "value": "side2" } }
+    },
+    {
+      "id": "t_back_side",
+      "event": "back",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "loc" },
+        { "op": "literal", "value": "side" }
+      ]},
+      "set": { "loc": { "op": "literal", "value": "goal" } }
+    }
+  ],
+  "properties": [
+    {
+      "id": "return_to_goal",
+      "kind": "canReach",
+      "from": { "op": "literal", "value": true },
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "loc" },
+        { "op": "literal", "value": "goal" }
+      ]}
+    }
+  ],
+  "analysis": { "maxStates": 10, "maxDepth": 10, "maxTransitions": 100 }
+}

@@ -3,6 +3,8 @@ import type {
   GoldenCase,
   GoldenExpectation,
   Report,
+  Target,
+  Verdict,
 } from "./ir.ts";
 
 function diag(code: string, message: string): Diagnostic {
@@ -109,6 +111,15 @@ export function checkVerdictInvariants(
       return v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0);
     });
     if (!found) push("EXPECT", `必須証拠フィールド ${field} が空です`);
+  }
+  for (const [t, v] of Object.entries(expected.targetVerdicts ?? {}) as [
+    Target,
+    Verdict,
+  ][]) {
+    const actual = report.targets.find((x) => x.target === t)?.verdict;
+    if (actual !== v) {
+      push("EXPECT", `target ${t} 期待 ${v} 実際 ${actual ?? "なし"}`);
+    }
   }
 
   return out;

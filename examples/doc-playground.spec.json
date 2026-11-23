@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "0.1.0",
+  "kind": "tidal.uxSpec",
+  "states": [
+    { "id": "doc", "domain": ["empty", "dirty", "saved"] }
+  ],
+  "initialState": {
+    "values": [{ "variable": "doc", "value": "empty" }]
+  },
+  "events": [
+    { "id": "edit", "kind": "user" },
+    { "id": "save", "kind": "user" },
+    { "id": "reload", "kind": "browser" }
+  ],
+  "transitions": [
+    {
+      "id": "t_edit",
+      "event": "edit",
+      "when": { "op": "literal", "value": true },
+      "set": { "doc": { "op": "literal", "value": "dirty" } }
+    },
+    {
+      "id": "t_save",
+      "event": "save",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "doc" },
+        { "op": "literal", "value": "dirty" }
+      ]},
+      "set": { "doc": { "op": "literal", "value": "saved" } }
+    },
+    {
+      "id": "t_reload_empty",
+      "event": "reload",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "doc" },
+        { "op": "literal", "value": "empty" }
+      ]},
+      "set": {}
+    },
+    {
+      "id": "t_reload_saved",
+      "event": "reload",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "doc" },
+        { "op": "literal", "value": "saved" }
+      ]},
+      "set": {}
+    }
+  ],
+  "properties": [
+    {
+      "id": "saved_doc_never_lost",
+      "kind": "neverTransition",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "doc" },
+        { "op": "literal", "value": "saved" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "doc" },
+        { "op": "literal", "value": "empty" }
+      ]}
+    },
+    {
+      "id": "empty_can_be_saved",
+      "kind": "canReach",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "doc" },
+        { "op": "literal", "value": "empty" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "doc" },
+        { "op": "literal", "value": "saved" }
+      ]}
+    },
+    {
+      "id": "dirty_escapable_by_user",
+      "kind": "escapable",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "doc" },
+        { "op": "literal", "value": "dirty" }
+      ]},
+      "by": "user"
+    }
+  ],
+  "analysis": {
+    "maxStates": 100,
+    "maxDepth": 10,
+    "maxTransitions": 10000
+  }
+}

@@ -225,6 +225,8 @@ export interface GoldenExpectation {
   cause?: Cause;
   evidenceKind?: string;
   requiredEvidenceFields: string[];
+  // target ごとの期待 verdict（overall だけでは区別できない場合に使う）
+  targetVerdicts?: Partial<Record<Target, Verdict>>;
 }
 
 export interface GoldenCase {

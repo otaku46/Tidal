@@ -1,0 +1,162 @@
+{
+  "schemaVersion": "0.1.0",
+  "kind": "tidal.uxSpec",
+  "states": [
+    { "id": "pending", "domain": ["none", "a", "b", "ab"] },
+    { "id": "latest", "domain": ["none", "a", "b"] },
+    { "id": "view", "domain": ["empty", "a", "b"] }
+  ],
+  "initialState": {
+    "values": [
+      { "variable": "pending", "value": "none" },
+      { "variable": "latest", "value": "none" },
+      { "variable": "view", "value": "empty" }
+    ]
+  },
+  "events": [
+    { "id": "send_a", "kind": "user" },
+    { "id": "send_b", "kind": "user" },
+    { "id": "release_b", "kind": "env" },
+    { "id": "release_a", "kind": "env" }
+  ],
+  "transitions": [
+    {
+      "id": "t_send_a",
+      "event": "send_a",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "pending" },
+        { "op": "literal", "value": "none" }
+      ]},
+      "set": {
+        "pending": { "op": "literal", "value": "a" },
+        "latest": { "op": "literal", "value": "a" },
+        "view": { "op": "literal", "value": "a" }
+      }
+    },
+    {
+      "id": "t_send_b",
+      "event": "send_b",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "pending" },
+        { "op": "literal", "value": "a" }
+      ]},
+      "set": {
+        "pending": { "op": "literal", "value": "ab" },
+        "latest": { "op": "literal", "value": "b" },
+        "view": { "op": "literal", "value": "b" }
+      }
+    },
+    {
+      "id": "t_release_b",
+      "event": "release_b",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "pending" },
+        { "op": "literal", "value": "ab" }
+      ]},
+      "set": { "pending": { "op": "literal", "value": "a" } }
+    },
+    {
+      "id": "t_release_a",
+      "event": "release_a",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "pending" },
+        { "op": "literal", "value": "a" }
+      ]},
+      "set": { "pending": { "op": "literal", "value": "none" } }
+    },
+    {
+      "id": "t_release_a_stale",
+      "event": "release_a",
+      "when": { "op": "eq", "args": [
+        { "op": "ref", "variable": "pending" },
+        { "op": "literal", "value": "a" }
+      ]},
+      "set": {
+        "pending": { "op": "literal", "value": "none" },
+        "view": { "op": "literal", "value": "a" }
+      }
+    }
+  ],
+  "properties": [
+    {
+      "id": "conflict_resolvable",
+      "kind": "canReach",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "pending" },
+        { "op": "literal", "value": "ab" }
+      ]},
+      "to": { "op": "eq", "args": [
+        { "op": "ref", "variable": "pending" },
+        { "op": "literal", "value": "none" }
+      ]}
+    },
+    {
+      "id": "pending_ab_escapable",
+      "kind": "escapable",
+      "from": { "op": "eq", "args": [
+        { "op": "ref", "variable": "pending" },
+        { "op": "literal", "value": "ab" }
+      ]},
+      "by": "any"
+    },
+    {
+      "id": "newer_value_applied_before_stale_release",
+      "kind": "neverTransition",
+      "from": { "op": "and", "args": [
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "latest" },
+          { "op": "literal", "value": "b" }
+        ]},
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "view" },
+          { "op": "literal", "value": "b" }
+        ]}
+      ]},
+      "to": { "op": "and", "args": [
+        { "op": "and", "args": [
+          { "op": "eq", "args": [
+            { "op": "ref", "variable": "latest" },
+            { "op": "literal", "value": "b" }
+          ]},
+          { "op": "eq", "args": [
+            { "op": "ref", "variable": "pending" },
+            { "op": "literal", "value": "a" }
+          ]}
+        ]},
+        { "op": "ne", "args": [
+          { "op": "ref", "variable": "view" },
+          { "op": "literal", "value": "b" }
+        ]}
+      ]}
+    },
+    {
+      "id": "no_stale_rollback",
+      "kind": "neverTransition",
+      "from": { "op": "and", "args": [
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "latest" },
+          { "op": "literal", "value": "b" }
+        ]},
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "view" },
+          { "op": "literal", "value": "b" }
+        ]}
+      ]},
+      "to": { "op": "and", "args": [
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "view" },
+          { "op": "literal", "value": "a" }
+        ]},
+        { "op": "eq", "args": [
+          { "op": "ref", "variable": "latest" },
+          { "op": "literal", "value": "b" }
+        ]}
+      ]}
+    }
+  ],
+  "analysis": {
+    "maxStates": 100,
+    "maxDepth": 10,
+    "maxTransitions": 10000
+  }
+}

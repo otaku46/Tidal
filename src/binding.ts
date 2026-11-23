@@ -23,13 +23,25 @@ export interface Read {
 }
 
 export interface Action {
-  kind: "navigate" | "click" | "fill" | "reload" | "back" | "wait";
+  kind:
+    | "navigate"
+    | "click"
+    | "fill"
+    | "reload"
+    | "back"
+    | "wait"
+    | "release"
+    | "expectHeld";
   locator?: Locator;
   path?: string;
   value?: string;
   inputId?: string;
   condition?: Read;
   expected?: Scalar;
+  // release/expectHeld: 対象の hold fixture id
+  fixture?: string;
+  // release: 保留キュー内の index（0=最古、負数は末尾から。既定 0）
+  index?: number;
 }
 
 export interface ObservationCase {
@@ -67,6 +79,11 @@ export interface NetworkFixture {
   path: string;
   status: number;
   body?: string;
+  // "hold": マッチした要求を route.fetch() で実サーバーへ通し、
+  // 応答だけを保留する（release/expectHeld アクションで制御）。
+  // hold では matchBody が必須（GET 等の body なし要求を誤って保留しないため）。
+  mode?: "fulfill" | "hold";
+  matchBody?: string;
 }
 
 export interface Binding {
@@ -146,7 +163,16 @@ function checkRead(v: unknown, path: string, diags: Diagnostic[]): Read | null {
   return out;
 }
 
-const ACTION_KINDS = new Set(["navigate", "click", "fill", "reload", "back", "wait"]);
+const ACTION_KINDS = new Set([
+  "navigate",
+  "click",
+  "fill",
+  "reload",
+  "back",
+  "wait",
+  "release",
+  "expectHeld",
+]);
 
 function checkAction(v: unknown, path: string, diags: Diagnostic[]): Action | null {
   if (!isObj(v) || typeof v.kind !== "string" || !ACTION_KINDS.has(v.kind)) {
@@ -161,6 +187,8 @@ function checkAction(v: unknown, path: string, diags: Diagnostic[]): Action | nu
   if (typeof v.path === "string") out.path = v.path;
   if (typeof v.value === "string") out.value = v.value;
   if (typeof v.inputId === "string") out.inputId = v.inputId;
+  if (typeof v.fixture === "string") out.fixture = v.fixture;
+  if (typeof v.index === "number" && Number.isSafeInteger(v.index)) out.index = v.index;
   if (v.condition !== undefined) {
     const c = checkRead(v.condition, `${path}.condition`, diags);
     if (c) out.condition = c;
@@ -331,12 +359,27 @@ export function resolveBinding(
           diags.push(diag("BINDING_NETWORK", "network には id/path/status が必要です", p));
           continue;
         }
-        network.push({
+        const fx: NetworkFixture = {
           id: n.id,
           path: n.path,
           status: n.status,
           body: typeof n.body === "string" ? n.body : undefined,
-        });
+        };
+        if (n.mode !== undefined) {
+          if (n.mode !== "fulfill" && n.mode !== "hold") {
+            diags.push(diag("BINDING_NETWORK", "network.mode は fulfill|hold", p));
+            continue;
+          }
+          fx.mode = n.mode;
+        }
+        if (typeof n.matchBody === "string") fx.matchBody = n.matchBody;
+        if (fx.mode === "hold" && fx.matchBody === undefined) {
+          diags.push(
+            diag("BINDING_NETWORK", "mode:hold には matchBody が必要です", p),
+          );
+          continue;
+        }
+        network.push(fx);
       }
     }
   }

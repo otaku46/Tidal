@@ -187,7 +187,7 @@ impl.lang = "ts"
 intent = "探索グラフ上で neverTransition・canReach・escapable を評価し、プロパティ別証拠とカバレッジを出力する。"
 input = ["schema.UxSpec", "schema.ModelGraph", "schema.RunContext"]
 output = ["schema.RunResults"]
-design_notes = "neverTransition は from を満たす遷移前状態と to を満たす遷移後状態を検査し、その辺のイベントが unless と一致する場合に除外する。canReach は各 from 状態から to への存在経路を検査し、長さ 0 を認める。escapable は各 from 状態から from の外へ出る経路を検査し、by=user では全辺を user に限定する。到達不能の反例は、探索済みの候補から許可辺で到達できる範囲が閉じている場合に確定する。完全探索で評価対象が空なら VACUOUS、探索の打ち切りで評価対象や真偽が未確定なら EXPLORATION_LIMIT。反例は最短の初期状態からの接頭辞を優先し、同長時は探索順で選ぶ。到達性反例には目標へ進めない起点と探索範囲を記録する。"
+design_notes = "neverTransition は from を満たす遷移前状態と to を満たす遷移後状態を検査し、その辺のイベントが unless と一致する場合に除外する。canReach は各 from 状態から to への存在経路を検査し、長さ 0 を認める。escapable は各 from 状態から from の外へ出る経路を検査し、by=user では全辺を user に限定する。到達不能の反例は、探索済みの候補から許可辺で到達できる範囲が閉じている（範囲内に未展開状態がない）場合に確定し、探索打ち切り時も CONFIRMED を維持して causes に EXPLORATION_LIMIT を残す。canReach/escapable で全起点が条件を満たしても未探索領域が残る場合は新たな起点があり得るため PASS にせず INCONCLUSIVE / EXPLORATION_LIMIT とする。完全探索で評価対象が空なら VACUOUS。反例は最短の初期状態からの接頭辞を優先し、同長時は探索順で選ぶ。到達性反例には目標へ進めない起点と探索範囲を記録する。"
 impl.lang = "ts"
 
 [func.resolveScope]

@@ -11,7 +11,7 @@ fields = { id = "string", spec = "schema.JsonValue", scope = "schema.RunScope", 
 
 [schema.GoldenExpectation]
 kind = "node"
-fields = { overall = "schema.Verdict", exitCode = "int", target = "schema.Target?", cause = "schema.Cause?", evidenceKind = "string?", requiredEvidenceFields = "string[]" }
+fields = { overall = "schema.Verdict", exitCode = "int", target = "schema.Target?", cause = "schema.Cause?", evidenceKind = "string?", requiredEvidenceFields = "string[]", targetVerdicts = "schema.Verdict-map?" }
 
 [func.runGoldenCases]
 intent = "draft-retention.golden-cases に基づく検証ケースを実行し、期待判定と不変条件を確認する。"
@@ -24,7 +24,7 @@ impl.lang = "ts"
 intent = "確定証拠、モデルの決定性、観測不一致、実行スコープ、依存先障害に関する5つの判定不変条件を検査する。"
 input = ["schema.Report", "schema.GoldenExpectation"]
 output = ["schema.Diagnostic"]
-design_notes = "既存 Golden Suite の I1〜I5 との対応は元ケース確認時に固定する。モデルの確定違反とアダプターエラーが同居するケースで、全体判定と両方の証拠・診断・未評価情報を確認する。"
+design_notes = "既存 Golden Suite の I1〜I5 との対応は元ケース確認時に固定する。モデルの確定違反とアダプターエラーが同居するケースで、全体判定と両方の証拠・診断・未評価情報を確認する。 targetVerdicts は target ごとの期待 verdict で、overall だけでは区別できない複数 target の同時検証（例: model=CONFIRMED かつ implementation=PASS）に使う。"
 impl.lang = "ts"
 
 [mod.golden]

@@ -1,4 +1,11 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import {
+  chromium,
+  type APIResponse,
+  type Browser,
+  type BrowserContext,
+  type Page,
+  type Route,
+} from "playwright";
 import type {
   AbstractState,
   Diagnostic,
@@ -67,6 +74,8 @@ export class PlaywrightAdapter implements UXAdapter {
   private binding?: Binding;
   // per-event networkFixture: 実行中のイベントが指定した fixture id
   private activeFixtureId?: string;
+  // hold fixture ごとの保留キュー（route.fetch() 済み・応答未配信）
+  private held = new Map<string, { route: Route; response: APIResponse }[]>();
 
   constructor(binding: Binding, config: RuntimeConfig) {
     this.binding = binding;
@@ -93,17 +102,41 @@ export class PlaywrightAdapter implements UXAdapter {
     const candidates = fixtures.filter((f) => fixtureMatches(f, url));
     if (candidates.length === 0) return undefined;
     candidates.sort((a, b) => (a.id < b.id ? -1 : 1));
+    // hold fixture はイベントが明示的に有効化した場合のみ適用する。
+    // 非活性時に候補へ残すと、関係ない要求まで保留されてしまう。
+    const eligible = candidates.filter(
+      (f) => f.mode !== "hold" || f.id === this.activeFixtureId,
+    );
+    if (eligible.length === 0) return undefined;
     if (this.activeFixtureId !== undefined) {
-      const active = candidates.find((f) => f.id === this.activeFixtureId);
+      const active = eligible.find((f) => f.id === this.activeFixtureId);
       if (active) return active;
     }
-    return candidates[0];
+    return eligible[0];
   }
 
   private async newContext(): Promise<void> {
     this.context = await this.browser!.newContext();
+    this.held = new Map();
     await this.context.route("**/*", async (route) => {
       const fx = this.selectFixture(route.request().url());
+      if (fx?.mode === "hold") {
+        const postData = route.request().postData() ?? "";
+        if (fx.matchBody !== undefined && !postData.includes(fx.matchBody)) {
+          await route.continue();
+          return;
+        }
+        try {
+          // 実サーバーへは通し、応答だけを保留する（要求の到着順は実時間どおり）
+          const response = await route.fetch();
+          const q = this.held.get(fx.id) ?? [];
+          q.push({ route, response });
+          this.held.set(fx.id, q);
+        } catch {
+          await route.abort();
+        }
+        return;
+      }
       if (!fx) {
         await route.continue();
         return;
@@ -187,6 +220,62 @@ export class PlaywrightAdapter implements UXAdapter {
                 }
                 await this.page!.waitForTimeout(50);
               }
+            }
+            break;
+          }
+          case "expectHeld": {
+            // 保留要求が expected 件になるまで待つ（要求捕捉の同期点）
+            const want = typeof a.expected === "number" ? a.expected : NaN;
+            if (!a.fixture || !Number.isSafeInteger(want)) {
+              out.push(diag("ADAPTER_ERROR", "expectHeld には fixture と数値 expected が必要です"));
+              return out;
+            }
+            const deadline = Date.now() + this.config.timeoutMs;
+            for (;;) {
+              const n = this.held.get(a.fixture)?.length ?? 0;
+              if (n === want) break;
+              if (Date.now() > deadline) {
+                out.push(
+                  diag(
+                    "ADAPTER_ERROR",
+                    `expectHeld タイムアウト: ${a.fixture} の保留数 ${n} != ${want}`,
+                  ),
+                );
+                return out;
+              }
+              await this.page!.waitForTimeout(50);
+            }
+            break;
+          }
+          case "release": {
+            // 保留キューから1件取り出して応答を配信する。
+            // index: 0=最古（既定）、負数は末尾から（-1=最新）。
+            if (!a.fixture) {
+              out.push(diag("ADAPTER_ERROR", "release には fixture が必要です"));
+              return out;
+            }
+            const q = this.held.get(a.fixture) ?? [];
+            if (q.length === 0) {
+              out.push(
+                diag("ADAPTER_ERROR", `release 対象の保留要求がありません: ${a.fixture}`),
+              );
+              return out;
+            }
+            const idx = a.index ?? 0;
+            const i = idx < 0 ? q.length + idx : idx;
+            if (i < 0 || i >= q.length) {
+              out.push(
+                diag("ADAPTER_ERROR", `release index が範囲外です: ${idx} (件数 ${q.length})`),
+              );
+              return out;
+            }
+            const [item] = q.splice(i, 1);
+            if (q.length === 0) this.held.delete(a.fixture);
+            try {
+              await item.route.fulfill({ response: item.response });
+            } catch (e) {
+              out.push(diag("ADAPTER_ERROR", `release 失敗: ${(e as Error).message}`));
+              return out;
             }
             break;
           }

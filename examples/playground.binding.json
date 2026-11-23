@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "0.1.0",
+  "baseUrl": "http://localhost:4173/fixtures/apps/playground/index.html",
+  "events": [
+    {
+      "event": "edit",
+      "actions": [
+        {
+          "kind": "fill",
+          "locator": { "kind": "testId", "value": "doc-body" },
+          "inputId": "doc-body-text"
+        }
+      ]
+    },
+    {
+      "event": "save",
+      "actions": [
+        {
+          "kind": "click",
+          "locator": { "kind": "testId", "value": "save-button" }
+        },
+        {
+          "kind": "wait",
+          "condition": {
+            "locator": { "kind": "testId", "value": "doc-status" },
+            "kind": "text"
+          },
+          "expected": "saved"
+        }
+      ]
+    },
+    {
+      "event": "reload",
+      "actions": [
+        { "kind": "reload" }
+      ]
+    }
+  ],
+  "observe": [
+    {
+      "variable": "doc",
+      "source": {
+        "locator": { "kind": "testId", "value": "doc-status" },
+        "kind": "text"
+      },
+      "cases": [
+        { "observed": "empty", "abstract": "empty" },
+        { "observed": "dirty", "abstract": "dirty" },
+        { "observed": "saved", "abstract": "saved" }
+      ]
+    }
+  ],
+  "oracles": [
+    {
+      "property": "saved_doc_never_lost",
+      "inputId": "doc-body-text",
+      "afterEvent": "reload",
+      "actual": {
+        "locator": { "kind": "testId", "value": "doc-body" },
+        "kind": "value"
+      }
+    }
+  ],
+  "setup": [],
+  "reset": [],
+  "network": [],
+  "selfTest": [
+    {
+      "locator": { "kind": "testId", "value": "doc-status" },
+      "kind": "text"
+    },
+    {
+      "locator": { "kind": "testId", "value": "doc-body" },
+      "kind": "value"
+    }
+  ]
+}

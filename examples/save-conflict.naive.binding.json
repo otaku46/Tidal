@@ -1,0 +1,4 @@
+{
+  "extends": "./save-conflict.binding.json",
+  "baseUrl": "http://localhost:4173/fixtures/apps/conflict/index.html"
+}
